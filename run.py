@@ -17,7 +17,7 @@ sys.path.append("ares-sc2")
 
 import yaml
 
-from bot.main import MyBot
+from bot.main import MicroBot as MyBot
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -82,15 +82,17 @@ def main():
                 f"Tip: If you're using linux, MAPS_PATH will definitely need updating\n"
             )
 
-            # see if user has any recent ladder maps
-            map_list: List[str] = [
-                "PylonAIE_v4",
-                "PersephoneAIE_v4",
-                "TorchesAIE_v4",
-                "IncorporealAIE_v4",
-                "MagannathaAIE_v2",
-                "UltraloveAIE_v2",
-            ]
+        # Override auto-discovery: use this list instead
+        map_list: List[str] = [
+            #"PylonAIE_v4",
+            #"PersephoneAIE_v4",
+            #"TorchesAIE_v4",
+            #"IncorporealAIE_v4",
+            #"MagannathaAIE_v2",
+            #"UltraloveAIE_v2",
+            "Tier1MicroAIArena_v6",  # Micro Map
+            #"Tier2MicroAIArena_v6",  # Micro Map
+        ]
 
         random_race = random.choice([Race.Zerg, Race.Terran, Race.Protoss])
         print("Starting local game...")
