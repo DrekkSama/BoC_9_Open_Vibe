@@ -94,7 +94,7 @@ def main():
             #"Tier2MicroAIArena_v6",  # Micro Map
         ]
 
-        random_race = random.choice([Race.Zerg, Race.Terran, Race.Protoss])
+        random_race = random.choice([Race.Terran])
         print("Starting local game...")
         run_game(
             maps.get(random.choice(map_list)),
