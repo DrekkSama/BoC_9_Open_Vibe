@@ -55,7 +55,7 @@ BANELING_SPLASH_RADIUS: float = 2.2
 BANELING_MIN_TARGETS: int = 2
 
 
-class MicroBot(AresBot):
+class DSBot(AresBot):
     """Zerg micro-only bot.
 
     Controls: Zergling (melee chase), Roach (stutter-step + focus-fire),
@@ -66,7 +66,7 @@ class MicroBot(AresBot):
         super().__init__(game_step_override)
 
     async def on_step(self, iteration: int) -> None:
-        await super(MicroBot, self).on_step(iteration)
+        await super().on_step(iteration)
 
         # Collect friendly combat units (exclude structures, workers, eggs)
         my_units: Units = self.units.filter(

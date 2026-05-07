@@ -35,14 +35,14 @@ QUEEN_RANGE: float = 7.0
 ROACH_RANGE: float = 6.0
 
 
-class MicroBot(AresBot):
+class GLMBot(AresBot):
     """Zerg micro-only bot: stutter-step, focus-fire, melee chase, baneling AOE, queen heal."""
 
     def __init__(self, game_step_override: Optional[int] = None):
         super().__init__(game_step_override)
 
     async def on_step(self, iteration: int) -> None:
-        await super(MicroBot, self).on_step(iteration)
+        await super().on_step(iteration)
         if not self.all_own_units:
             return
 

@@ -1,5 +1,4 @@
 from typing import Optional, List, Dict
-from scipy.spatial import distance
 import numpy as np
 
 from ares import AresBot
@@ -12,14 +11,14 @@ from sc2.units import Units
 from cython_extensions import cy_distance_to, cy_closest_to, cy_in_attack_range, cy_find_aoe_position
 
 
-class MicroBot(AresBot):
+class MistralBot(AresBot):
     """Zerg micro-only bot focusing on unit control without macro."""
 
     def __init__(self, game_step_override: Optional[int] = None):
         super().__init__(game_step_override)
 
     async def on_step(self, iteration: int) -> None:
-        await super(MicroBot, self).on_step(iteration)
+        await super().on_step(iteration)
         
         # Collect friendly units by type
         zerglings: Units = self.get_units_by_type([UnitTypeId.ZERGLING])

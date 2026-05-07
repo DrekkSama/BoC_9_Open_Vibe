@@ -20,13 +20,13 @@ from cython_extensions import (
 import numpy as np
 
 # Import our constants
-from .constants import (
+from competitors.Qwen_constants import (
     ZERGLING, ROACH, BANELING, QUEEN,
     ATTACKING, BASE_DEFENDER,
     BANELING_SPLASH_RADIUS, QUEEN_HEAL_THRESHOLD, QUEEN_HEAL_RANGE
 )
 
-class MicroBot(AresBot):
+class QwenBot(AresBot):
     def __init__(self, game_step_override: Optional[int] = None):
         """Initiate custom bot
 
@@ -39,7 +39,7 @@ class MicroBot(AresBot):
         super().__init__(game_step_override)
 
     async def on_step(self, iteration: int) -> None:
-        await super(MicroBot, self).on_step(iteration)
+        await super().on_step(iteration)
         
         # Get our units and enemy units
         our_units: Units = self.units
