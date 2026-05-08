@@ -5,7 +5,9 @@ from ares.consts import UnitRole
 
 # Unit types we're focusing on for micro
 ZERGLING = UnitTypeId.ZERGLING
+DRONE = UnitTypeId.DRONE
 ROACH = UnitTypeId.ROACH
+RAVAGER = UnitTypeId.RAVAGER
 BANELING = UnitTypeId.BANELING
 QUEEN = UnitTypeId.QUEEN
 

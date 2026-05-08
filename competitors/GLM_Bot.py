@@ -48,10 +48,10 @@ class GLMBot(AresBot):
 
         # ── Collect units by type ───────────────────────────────────────────
         zerglings: list[Unit] = [
-            u for u in self.all_own_units if u.type_id == UnitID.ZERGLING
+            u for u in self.all_own_units if u.type_id in {UnitID.ZERGLING, UnitID.DRONE}
         ]
         roaches: list[Unit] = [
-            u for u in self.all_own_units if u.type_id == UnitID.ROACH
+            u for u in self.all_own_units if u.type_id in {UnitID.ROACH, UnitID.RAVAGER}
         ]
         banelings: list[Unit] = [
             u for u in self.all_own_units if u.type_id == UnitID.BANELING

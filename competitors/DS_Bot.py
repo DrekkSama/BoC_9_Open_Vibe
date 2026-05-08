@@ -14,7 +14,7 @@ Key Decisions:
       Banelings aren't spellcasters).
 
 Limitations:
-    - Ground units only (Zergling, Roach, Baneling, Queen).
+    - Ground units only (Zergling, Drone, Roach, Ravager, Baneling, Queen).
     - Assumes pre-spawned units on micro test maps; no production/economy.
     - No advanced threat maps or role-switching.
 """
@@ -44,8 +44,8 @@ from cython_extensions import (
 )
 
 # ── Unit type sets ─────────────────────────────────────────────────────
-RANGED_TYPES: set[UnitTypeId] = {UnitTypeId.ROACH, UnitTypeId.QUEEN}
-MELEE_TYPES: set[UnitTypeId] = {UnitTypeId.ZERGLING}
+RANGED_TYPES: set[UnitTypeId] = {UnitTypeId.ROACH, UnitTypeId.QUEEN, UnitTypeId.RAVAGER}
+MELEE_TYPES: set[UnitTypeId] = {UnitTypeId.ZERGLING, UnitTypeId.DRONE}
 BANELING_TYPE: set[UnitTypeId] = {UnitTypeId.BANELING}
 QUEEN_TYPE: set[UnitTypeId] = {UnitTypeId.QUEEN}
 ALL_COMBAT_TYPES: set[UnitTypeId] = RANGED_TYPES | MELEE_TYPES | BANELING_TYPE
@@ -85,7 +85,7 @@ class DSBot(AresBot):
         # Separate by type
         queens: Units = my_units.filter(lambda u: u.type_id in QUEEN_TYPE)
         banelings: Units = my_units.filter(lambda u: u.type_id in BANELING_TYPE)
-        roaches: Units = my_units.filter(lambda u: u.type_id == UnitTypeId.ROACH)
+        roaches: Units = my_units.filter(lambda u: u.type_id in RANGED_TYPES)
         zerglings: Units = my_units.filter(lambda u: u.type_id in MELEE_TYPES)
 
         # Grids

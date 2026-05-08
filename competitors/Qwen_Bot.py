@@ -11,6 +11,7 @@ from ares.behaviors.combat.individual import (
 from ares.behaviors.combat.combat_maneuver import CombatManeuver
 from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.position import Point2
 from sc2.unit import Unit
 from sc2.units import Units
 from cython_extensions import (
@@ -21,7 +22,7 @@ import numpy as np
 
 # Import our constants
 from competitors.Qwen_constants import (
-    ZERGLING, ROACH, BANELING, QUEEN,
+    ZERGLING, DRONE, ROACH, RAVAGER, BANELING, QUEEN,
     ATTACKING, BASE_DEFENDER,
     BANELING_SPLASH_RADIUS, QUEEN_HEAL_THRESHOLD, QUEEN_HEAL_RANGE
 )
@@ -46,8 +47,8 @@ class QwenBot(AresBot):
         enemy_units: Units = self.enemy_units
         
         # Filter for the units we want to control (Zerglings, Roaches, Banelings, Queens)
-        zerglings: Units = our_units(ZERGLING)
-        roaches: Units = our_units(ROACH)
+        zerglings: Units = our_units(ZERGLING) | our_units(DRONE)
+        roaches: Units = our_units(ROACH) | our_units(RAVAGER)
         banelings: Units = our_units(BANELING)
         queens: Units = our_units(QUEEN)
         
@@ -176,7 +177,7 @@ class QwenBot(AresBot):
                 if aoe_position is not None:
                     # Move to the detonation point and attack (auto-detonate on contact)
                     maneuver = CombatManeuver()
-                    maneuver.add(AMove(baneling, aoe_position))
+                    maneuver.add(AMove(baneling, Point2(aoe_position)))
                     self.register_behavior(maneuver)
                 else:
                     # No good position found, hold position

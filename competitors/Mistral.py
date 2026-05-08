@@ -21,8 +21,8 @@ class MistralBot(AresBot):
         await super().on_step(iteration)
         
         # Collect friendly units by type
-        zerglings: Units = self.get_units_by_type([UnitTypeId.ZERGLING])
-        roaches: Units = self.get_units_by_type([UnitTypeId.ROACH])
+        zerglings: Units = self.get_units_by_type([UnitTypeId.ZERGLING, UnitTypeId.DRONE])
+        roaches: Units = self.get_units_by_type([UnitTypeId.ROACH, UnitTypeId.RAVAGER])
         banelings: Units = self.get_units_by_type([UnitTypeId.BANELING])
         queens: Units = self.get_units_by_type([UnitTypeId.QUEEN])
         
