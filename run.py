@@ -84,17 +84,18 @@ def main():
 
         # Override auto-discovery: use this list instead
         map_list: List[str] = [
-            #"PylonAIE_v4",
-            #"PersephoneAIE_v4",
-            #"TorchesAIE_v4",
-            #"IncorporealAIE_v4",
-            #"MagannathaAIE_v2",
-            #"UltraloveAIE_v2",
-            "Tier1MicroAIArena_v6",  # Micro Map
+            "PylonAIE_v4",
+            "PersephoneAIE_v4",
+            "TorchesAIE_v4",
+            "IncorporealAIE_v4",
+            "MagannathaAIE_v2",
+            "UltraloveAIE_v2",
+            #### Micro Maps 
+            #"Tier1MicroAIArena_v6",  # Micro Map
             #"Tier2MicroAIArena_v6",  # Micro Map
         ]
 
-        random_race = random.choice([Race.Terran])
+        random_race = random.choice([Race.Terran, Race.Zerg, Race.Protoss])
         print("Starting local game...")
         run_game(
             maps.get(random.choice(map_list)),
