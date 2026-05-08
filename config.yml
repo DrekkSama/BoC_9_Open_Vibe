@@ -3,7 +3,7 @@
 # Can add own unique config options here if desired
 
 # Set custom values here for your bot
-MyBotName: MicroBot
+MyBotName: GLM_Bot
 MyBotRace: Zerg
 # setting true allows auto upload to aiareana (https://aiarena.net/) on push to `main` branch
 # see tutorial on readme before setting to True
