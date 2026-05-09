@@ -43,6 +43,16 @@ EXPANSION_PHASES: list[tuple[int, int, int]] = [
     (60, 99, 3),  # Phase 4: expand freely when 60+ drones
 ]
 
+# Gas phases: (min_drone_count, gas_per_base, max_pending_geysers)
+# Phase 1: Post-build — 1 gas per base (2 total), enough for ling speed + Lair
+# Phase 2: Mid-game — 1.5 gas per base (round up), supports upgrades + ravagers
+# Phase 3: Late-game — 2 gas per base, full saturation for hive tech
+GAS_PHASES: list[tuple[int, float, int]] = [
+    (0, 1.0, 1),    # Phase 1: 1 geyser per base
+    (36, 1.5, 2),   # Phase 2: 1.5 geysers per base (rounds up)
+    (56, 2.0, 2),   # Phase 3: 2 geysers per base
+]
+
 # Upgrade priority order (lower = higher priority)
 UPGRADE_PRIORITY: list[UpgradeID] = [
     UpgradeID.ZERGLINGMOVEMENTSPEED,
@@ -146,13 +156,11 @@ class MacroManager:
         ):
             macro_plan.add(BuildWorkers(to_count=max_workers))
 
-        # Gas — scale with worker count
-        if self._ai.supply_workers > 20:
-            gas_count: int = (
-                3 if self._ai.supply_workers > 70
-                else (2 if self._ai.supply_workers > 40 else 1)
-            )
-            macro_plan.add(GasBuildingController(to_count=gas_count))
+        # Gas — phased based on drone count and base count
+        target_gas, max_pending_gas = self._gas_targets()
+        macro_plan.add(GasBuildingController(
+            to_count=target_gas, max_pending=max_pending_gas,
+        ))
 
         # Spawning — use composition from compositions.py
         army_comp: dict[UnitID, dict] = get_army_comp(
@@ -198,6 +206,44 @@ class MacroManager:
         macro_plan.add(ExpansionController(to_count=target_bases, max_pending=max_pending))
 
         self._ai.register_behavior(macro_plan)
+
+    # ── Gas Logic ───────────────────────────────────────────────────────────
+
+    def _gas_targets(self) -> tuple[int, int]:
+        """Determine target gas count and max pending geysers.
+
+        Scales gas with base count and economy maturity. Under heavy
+        rush pressure, delay extra gas to prioritize army units.
+
+        Returns:
+            (target_gas, max_pending) tuple for GasBuildingController.
+        """
+        ai = self._ai
+        drone_count: int = ai.supply_workers
+        base_count: int = len(ai.townhalls.ready)
+
+        # Under rush pressure: don't build more gas than we already have
+        if self._threats.get("rush_detected", False) and ai.supply_army < 16:
+            return (len(ai.gas_buildings), 0)
+
+        # Walk through gas phases, pick the highest one we qualify for
+        gas_per_base: float = GAS_PHASES[0][1]
+        max_pending: int = GAS_PHASES[0][2]
+        for min_drones, gpb, pending in GAS_PHASES:
+            if drone_count >= min_drones:
+                gas_per_base = gpb
+                max_pending = pending
+
+        target_gas: int = int(base_count * gas_per_base + 0.999)  # ceil
+
+        # If we have Lair tech, ensure at least 4 gas for upgrades
+        if (
+            ai.structures(UnitID.LAIR).ready.exists
+            or ai.structures(UnitID.HIVE).ready.exists
+        ) and target_gas < 4:
+            target_gas = 4
+
+        return (target_gas, max_pending)
 
     # ── Expansion Logic ─────────────────────────────────────────────────────
 
