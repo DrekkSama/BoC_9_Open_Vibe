@@ -17,7 +17,7 @@ sys.path.append("ares-sc2")
 
 import yaml
 
-from bot.main import MicroBot as MyBot
+from bot.main import GLM_Bot as MyBot
 from ladder import run_ladder_game
 
 plt = platform.system()
