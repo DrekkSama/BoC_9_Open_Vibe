@@ -31,6 +31,18 @@ BEGIN_ATTACK_SUPPLY: float = 6.0
 MID_GAME_TIME: float = 360.0
 NATURAL_TIMING_THRESHOLD: float = 210.0  # 3:30
 
+# Expansion phases: (min_drone_count, target_base_count, max_pending_expansions)
+# Phase 1: Opening (post-build) — 2 bases from build order, hold at 2
+# Phase 2: Early mid-game — 3 bases once we have 30+ drones
+# Phase 3: Mid-game — 4 bases once we have 44+ drones
+# Phase 4: Late-game — expand aggressively when economy is saturated
+EXPANSION_PHASES: list[tuple[int, int, int]] = [
+    (0, 2, 1),    # Phase 1: hold at 2 bases (natural from build order)
+    (30, 3, 1),   # Phase 2: take 3rd when 30+ drones
+    (44, 4, 2),   # Phase 3: take 4th when 44+ drones
+    (60, 99, 3),  # Phase 4: expand freely when 60+ drones
+]
+
 # Upgrade priority order (lower = higher priority)
 UPGRADE_PRIORITY: list[UpgradeID] = [
     UpgradeID.ZERGLINGMOVEMENTSPEED,
@@ -181,14 +193,44 @@ class MacroManager:
                 )
             )
 
-        # Expansions
-        if self._threats.get("rush_detected", False) and self._ai.supply_army < 16:
-            max_pending: int = 0
-        else:
-            max_pending = 3 if self._ai.minerals < 1250 else 4
-        macro_plan.add(ExpansionController(to_count=99, max_pending=max_pending))
+        # Expansions — phased based on drone count and threat state
+        target_bases, max_pending = self._expansion_targets()
+        macro_plan.add(ExpansionController(to_count=target_bases, max_pending=max_pending))
 
         self._ai.register_behavior(macro_plan)
+
+    # ── Expansion Logic ─────────────────────────────────────────────────────
+
+    def _expansion_targets(self) -> tuple[int, int]:
+        """Determine target base count and max pending expansions.
+
+        Uses a phased approach: expand conservatively early, then more
+        aggressively as the economy matures. Under rush pressure, block
+        expansions entirely until we have enough army to survive.
+
+        Returns:
+            (target_bases, max_pending) tuple for ExpansionController.
+        """
+        ai = self._ai
+        drone_count: int = ai.supply_workers
+
+        # Under rush pressure with small army: block all expansion
+        if self._threats.get("rush_detected", False) and ai.supply_army < 16:
+            return (len(ai.townhalls.ready), 0)
+
+        # Walk through phases, pick the highest one we qualify for
+        target_bases: int = EXPANSION_PHASES[0][1]
+        max_pending: int = EXPANSION_PHASES[0][2]
+        for min_drones, bases, pending in EXPANSION_PHASES:
+            if drone_count >= min_drones:
+                target_bases = bases
+                max_pending = pending
+
+        # If floating minerals, allow one more pending expansion
+        if ai.minerals > 1250 and max_pending < 4:
+            max_pending += 1
+
+        return (target_bases, max_pending)
 
     # ── Upgrades ────────────────────────────────────────────────────────────
 
