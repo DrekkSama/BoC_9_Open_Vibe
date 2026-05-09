@@ -6,11 +6,11 @@
 from sc2.ids.unit_typeid import UnitTypeId as UnitID
 
 # Early game (< 6 min): roach/ling/ravager focused
+# Queens excluded — managed separately via inject/creep/defense
 EARLY_COMP: dict[UnitID, dict] = {
-    UnitID.ROACH: {"proportion": 0.55, "priority": 1},
+    UnitID.ROACH: {"proportion": 0.58, "priority": 1},
     UnitID.ZERGLING: {"proportion": 0.30, "priority": 2},
-    UnitID.RAVAGER: {"proportion": 0.10, "priority": 3},
-    UnitID.QUEEN: {"proportion": 0.05, "priority": 4},
+    UnitID.RAVAGER: {"proportion": 0.12, "priority": 3},
 }
 
 # Mid game (6+ min): roach/ravager/ling/infestor — no hydra unless air detected

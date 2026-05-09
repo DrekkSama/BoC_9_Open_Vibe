@@ -41,65 +41,25 @@ BuildChoices:
 
 Builds:
     B2GM_Roach_Ravager_Ling:
-        ConstantWorkerProductionTill: 0
+        ConstantWorkerProductionTill: 44
         ShouldHandleGasSteal: False
+        AutoSupplyAtSupply: 28
         OpeningBuildOrder:
             - 12 overlord
             - 12 overlord_scout:
                   [enemy_nat_vision, enemy_nat_hg_spot]
-            - 12 drone
-            - 13 drone
-            - 14 drone
-            - 15 drone
-            - 15 drone
             - 15 spawningpool
             - 15 hatchery
-            - 14 drone
-            - 14 drone
-            - 14 drone
-            - 14 drone
             - 14 overlord
-            - 16 drone
             - 16 queen
             - 15 gas
-            - 17 drone
             - 17 queen
-            - 17 drone
-            - 20 drone
-            - 20 drone
-            - 21 drone
             - 21 roachwarren
-            - 22 drone
             - 21 overlord
-            - 23 drone
             - 16 hatchery
-            - 24 drone
-            - 25 drone
-            - 26 drone
-            - 27 drone
-            - 28 drone
             - 28 overlord
-            - 29 drone
-            - 30 drone
-            - 31 drone
-            - 32 drone
-            - 33 drone
-            - 34 drone
             - 35 gas
             - 35 lair
             - 35 queen
             - 36 roach x5
-            - 36 drone
-            - 36 drone
-            - 36 drone
-            - 36 drone
-            - 36 gas
-            - 36 overlord
-            - 36 drone
-            - 36 drone
-            - 36 drone
-            - 36 gas
-            - 36 overlord
-            - 36 queen
-
 

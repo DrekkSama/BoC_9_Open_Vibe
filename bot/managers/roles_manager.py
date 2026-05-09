@@ -10,6 +10,7 @@ from ares.consts import UnitRole
 
 
 # Combat unit types that should get combat roles
+# Queens excluded — managed by QueenManager with QUEEN_* roles
 COMBAT_UNIT_TYPES: set[UnitID] = {
     UnitID.ZERGLING,
     UnitID.BANELING,
@@ -17,7 +18,6 @@ COMBAT_UNIT_TYPES: set[UnitID] = {
     UnitID.RAVAGER,
     UnitID.HYDRALISK,
     UnitID.INFESTOR,
-    UnitID.QUEEN,
     UnitID.OVERSEER,
     UnitID.ULTRALISK,
     UnitID.BROODLORD,
