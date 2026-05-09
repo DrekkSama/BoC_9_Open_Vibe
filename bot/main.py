@@ -1,319 +1,190 @@
+# Purpose: Main AresBot subclass wiring all modules together
+# Key Decisions: Use ARES role system, MacroPlan, CombatManager for micro dispatch
+# Limitations: No ML-based engagement decisions, no neural parasite yet
+
 from typing import Optional
 
-import numpy as np
-from cython_extensions import (
-    cy_closest_to,
-    cy_distance_to,
-    cy_find_aoe_position,
-)
+from cython_extensions import cy_closest_to, cy_distance_to
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.buff_id import BuffId
 from sc2.ids.unit_typeid import UnitTypeId as UnitID
 from sc2.position import Point2
 from sc2.unit import Unit
+from sc2.units import Units
 
 from ares import AresBot
-from ares.behaviors.combat import CombatManeuver
-from ares.behaviors.combat.individual import (
-    AMove,
-    KeepUnitSafe,
-    PathUnitToTarget,
-    ShootTargetInRange,
-    StutterUnitBack,
-    UseTransfuse,
+from ares.behaviors.combat.individual import QueenSpreadCreep, TumorSpreadCreep
+from ares.behaviors.macro import (
+    AutoSupply,
+    BuildWorkers,
+    GasBuildingController,
+    MacroPlan,
+    Mining,
+    SpawnController,
 )
+from ares.consts import ALL_STRUCTURES, WORKER_TYPES, UnitRole
+
+from bot.combat import CombatManager
+from bot.compositions import get_army_comp
+from bot.managers.research_manager import research_upgrades
+from bot.managers.response_manager import assess_threats, respond_to_threats
 
 # ── Constants ────────────────────────────────────────────────────────────────
-BANELING_SPLASH_RADIUS: float = 2.2
-BANELING_MIN_TARGETS: int = 2
-QUEEN_TRANSFUSE_HP_THRESHOLD: float = 0.4
-QUEEN_TRANSFUSE_ENERGY_COST: float = 50.0
-QUEEN_RANGE: float = 7.0
-ROACH_RANGE: float = 6.0
+QUEEN_INJECT_ENERGY_COST: float = 25.0
+CREEP_TUMOR_ENERGY: float = 25.0
+BEGIN_ATTACK_SUPPLY: float = 6.0
+
+# Unit types that shouldn't be assigned combat roles
+IGNORE_ROLE_TYPES: set[UnitID] = {
+    UnitID.EGG,
+    UnitID.LARVA,
+    UnitID.CREEPTUMORBURROWED,
+    UnitID.CREEPTUMORQUEEN,
+    UnitID.CREEPTUMOR,
+    UnitID.MULE,
+    UnitID.OVERLORD,
+    UnitID.OVERSEER,
+    UnitID.DRONE,
+}
 
 
 class GLM_Bot(AresBot):
-    """Zerg micro-only bot: stutter-step, focus-fire, melee chase, baneling AOE, queen heal."""
+    """Zerg B2GM Roach Ravager bot using ARES framework."""
 
     def __init__(self, game_step_override: Optional[int] = None):
         super().__init__(game_step_override)
+        self._commenced_attack: bool = False
+        self._combat_mgr: Optional[CombatManager] = None
+
+    @property
+    def attack_target(self) -> Point2:
+        """Determine where the army should attack."""
+        if self.enemy_structures:
+            return cy_closest_to(self.start_location, self.enemy_structures).position
+        if self.time < 240.0:
+            return self.enemy_start_locations[0]
+        # Late game: search expansions
+        for expand_pos in self.expansion_locations_list:
+            if not self.is_visible(expand_pos):
+                return expand_pos
+        return self.enemy_start_locations[0]
+
+    async def on_start(self) -> None:
+        """Called once at the start of the game."""
+        await super().on_start()
+        self._combat_mgr = CombatManager(self)
 
     async def on_step(self, iteration: int) -> None:
         await super().on_step(iteration)
         if not self.all_own_units:
             return
 
-        # ── Collect units by type ───────────────────────────────────────────
-        zerglings: list[Unit] = [
-            u for u in self.all_own_units if u.type_id in {UnitID.ZERGLING, UnitID.DRONE}
-        ]
-        roaches: list[Unit] = [
-            u for u in self.all_own_units if u.type_id in {UnitID.ROACH, UnitID.RAVAGER}
-        ]
-        banelings: list[Unit] = [
-            u for u in self.all_own_units if u.type_id == UnitID.BANELING
-        ]
-        queens: list[Unit] = [
-            u for u in self.all_own_units if u.type_id == UnitID.QUEEN
-        ]
+        # ── Macro ───────────────────────────────────────────────────────────
+        self._macro()
 
-        enemies: list[Unit] = [
-            u for u in self.enemy_units
-            if not u.is_memory and (not u.is_cloaked or u.is_revealed)
-        ]
+        # ── Combat ──────────────────────────────────────────────────────────
+        forces: Units = self.mediator.get_units_from_role(role=UnitRole.ATTACKING)
 
-        if not enemies:
-            # No enemies visible: regroup toward map center
-            center: Point2 = self.game_info.map_center
-            for unit_list in (zerglings, roaches, banelings, queens):
-                for u in unit_list:
-                    self.register_behavior(AMove(u, center))
+        if not self._commenced_attack:
+            if self.get_total_supply(forces) >= BEGIN_ATTACK_SUPPLY:
+                self._commenced_attack = True
+
+        if self._commenced_attack and forces and self._combat_mgr is not None:
+            self._combat_mgr.step(forces)
+
+        # ── Queen inject + creep spread (always run) ────────────────────────
+        self._queen_inject()
+        self._creep_tumor_spread()
+
+        # ── Research upgrades (after build completes) ───────────────────────
+        if self.build_order_runner.build_completed:
+            research_upgrades(self)
+
+        # ── Response book (after build completes) ──────────────────────────
+        if self.build_order_runner.build_completed:
+            self._threats: dict[str, bool] = assess_threats(self)
+            respond_to_threats(self, self._threats)
+
+    async def on_unit_created(self, unit: Unit) -> None:
+        """Assign combat units to ATTACKING role on creation."""
+        await super().on_unit_created(unit)
+
+        if unit.type_id in IGNORE_ROLE_TYPES or unit.type_id in ALL_STRUCTURES:
+            return
+        if unit.type_id in WORKER_TYPES:
             return
 
-        avoid_grid: np.ndarray = self.mediator.get_ground_avoidance_grid
+        self.mediator.assign_role(tag=unit.tag, role=UnitRole.ATTACKING)
 
-        # ── Execution order: Queens → Banelings → Roaches → Zerglings ───────
-        self._control_queens(queens, enemies, avoid_grid)
-        self._control_banelings(banelings, enemies, avoid_grid)
-        self._control_roaches(roaches, enemies, avoid_grid)
-        self._control_zerglings(zerglings, enemies, avoid_grid)
+    # ── Macro ───────────────────────────────────────────────────────────────
+    def _macro(self) -> None:
+        """Run macro behaviors: mining, supply, workers, gas, spawning."""
+        self.register_behavior(Mining())
 
-    # ── Queens: Transfuse + ranged stutter-step ──────────────────────────────
-    def _control_queens(
-        self,
-        queens: list[Unit],
-        enemies: list[Unit],
-        avoid_grid: np.ndarray,
-    ) -> None:
-        for queen in queens:
-            maneuver = CombatManeuver()
-
-            # Priority 1: Transfuse injured friendlies
-            if queen.energy >= QUEEN_TRANSFUSE_ENERGY_COST:
-                maneuver.add(
-                    UseTransfuse(unit=queen, targets=self.all_own_units)
-                )
-
-            # Priority 2: Stutter-step attack nearest enemy
-            if enemies:
-                target: Unit = cy_closest_to(queen.position, enemies)
-                maneuver.add(
-                    StutterUnitBack(
-                        unit=queen, target=target, kite_via_pathing=True, grid=avoid_grid
-                    )
-                )
-
-            # Priority 3: Stay safe from AOE
-            maneuver.add(KeepUnitSafe(unit=queen, grid=avoid_grid))
-
-            self.register_behavior(maneuver)
-
-    # ── Banelings: AOE detonation evaluation ─────────────────────────────────
-    def _control_banelings(
-        self,
-        banelings: list[Unit],
-        enemies: list[Unit],
-        avoid_grid: np.ndarray,
-    ) -> None:
-        if not banelings:
-            return
-
-        # Find the best AOE position once for all banelings (shared target pool)
-        aoe_pos: Optional[np.ndarray] = cy_find_aoe_position(
-            BANELING_SPLASH_RADIUS, enemies, BANELING_MIN_TARGETS, set()
+        army_comp: dict[UnitID, dict] = get_army_comp(
+            self.time,
+            air_threat=getattr(self, "_threats", {}).get("air_signs", False),
         )
 
-        for bane in banelings:
-            maneuver = CombatManeuver()
+        macro_plan: MacroPlan = MacroPlan()
 
-            if aoe_pos is not None:
-                target_point: Point2 = Point2(aoe_pos)
-                # Check friendly fire: don't detonate near own zerglings if avoidable
-                friendly_near: bool = any(
-                    cy_distance_to(u.position, target_point) < BANELING_SPLASH_RADIUS
-                    for u in self.all_own_units
-                    if u.type_id == UnitID.ZERGLING and u.tag != bane.tag
-                )
-                if not friendly_near:
-                    # Move to detonation point; baneling auto-detonates on contact
-                    maneuver.add(
-                        PathUnitToTarget(
-                            unit=bane,
-                            grid=avoid_grid,
-                            target=target_point,
-                            success_at_distance=0.0,
-                        )
-                    )
-                else:
-                    # Friendly fire risk: hold position behind army
-                    self._hold_behind_lines(bane, maneuver, avoid_grid)
-            else:
-                # Not enough targets: hold behind friendly lines
-                self._hold_behind_lines(bane, maneuver, avoid_grid)
+        if self.build_order_runner.build_completed:
+            # Dynamic macro after opening completes
+            macro_plan.add(AutoSupply(base_location=self.start_location))
+            macro_plan.add(BuildWorkers(to_count=54))
+            macro_plan.add(GasBuildingController(to_count=6))
+            macro_plan.add(SpawnController(army_comp))
 
-            # Always keep safe from AOE
-            maneuver.add(KeepUnitSafe(unit=bane, grid=avoid_grid))
-            self.register_behavior(maneuver)
+        self.register_behavior(macro_plan)
 
-    def _hold_behind_lines(
-        self,
-        bane: Unit,
-        maneuver: CombatManeuver,
-        avoid_grid: np.ndarray,
-    ) -> None:
-        """Move baneling to a rally point behind the main army."""
-        army_center: Optional[Point2] = self._army_center_mass()
-        if army_center is not None:
-            # Move slightly behind army center (away from enemy start)
-            retreat_dir: Point2 = self._retreat_direction(army_center)
-            rally: Point2 = army_center + retreat_dir * 3.0
-            maneuver.add(
-                PathUnitToTarget(
-                    unit=bane, grid=avoid_grid, target=rally, success_at_distance=2.0
-                )
-            )
+    # ── Queen Inject (prioritize inject over creep tumor) ────────────────────
+    def _queen_inject(self) -> None:
+        """Inject larva on townhalls with idle queens. Prioritize inject."""
+        all_queens: list[Unit] = list(self.units(UnitID.QUEEN))
 
-    # ── Roaches: Focus-fire + stutter-step ───────────────────────────────────
-    def _control_roaches(
-        self,
-        roaches: list[Unit],
-        enemies: list[Unit],
-        avoid_grid: np.ndarray,
-    ) -> None:
-        if not roaches or not enemies:
-            return
-
-        # Overkill-aware focus-fire assignment
-        assignments: dict[int, Unit] = self._assign_focus_fire(roaches, enemies)
-
-        for roach in roaches:
-            maneuver = CombatManeuver()
-
-            if roach.tag in assignments:
-                assigned_target: Unit = assignments[roach.tag]
-                maneuver.add(
-                    StutterUnitBack(
-                        unit=roach,
-                        target=assigned_target,
-                        kite_via_pathing=True,
-                        grid=avoid_grid,
-                    )
-                )
-            else:
-                # Unassigned: shoot whatever is in range, move toward fight
-                maneuver.add(ShootTargetInRange(unit=roach, targets=enemies))
-                closest: Unit = cy_closest_to(roach.position, enemies)
-                maneuver.add(
-                    PathUnitToTarget(
-                        unit=roach,
-                        grid=avoid_grid,
-                        target=closest.position,
-                        success_at_distance=ROACH_RANGE,
-                    )
-                )
-
-            maneuver.add(KeepUnitSafe(unit=roach, grid=avoid_grid))
-            self.register_behavior(maneuver)
-
-    def _assign_focus_fire(
-        self,
-        roaches: list[Unit],
-        enemies: list[Unit],
-    ) -> dict[int, Unit]:
-        """Assign just enough roaches per enemy to kill it; excess retarget to next enemy.
-
-        Returns a mapping of roach tag → assigned enemy target.
-        """
-        assignments: dict[int, Unit] = {}
-        assigned_roaches: set[int] = set()
-
-        # Sort enemies by distance to roach center mass (closest first)
-        roach_center: Point2 = self._unit_list_center(roaches)
-        sorted_enemies: list[Unit] = sorted(
-            enemies, key=lambda e: cy_distance_to(roach_center, e.position)
-        )
-
-        for enemy in sorted_enemies:
-            if len(assigned_roaches) >= len(roaches):
-                break
-
-            enemy_hp: float = enemy.health + enemy.shield
-            if enemy_hp <= 0:
+        for queen in all_queens:
+            if queen.energy < QUEEN_INJECT_ENERGY_COST:
                 continue
 
-            # Estimate damage per roach shot
-            # Use first unassigned roach as representative for damage calc
-            sample_roach: Optional[Unit] = None
-            for r in roaches:
-                if r.tag not in assigned_roaches:
-                    sample_roach = r
-                    break
+            # Priority 1: Inject closest uninjected townhall
+            for th in self.townhalls:
+                if cy_distance_to(queen.position, th.position) < 10.0:
+                    if not th.has_buff(BuffId.QUEENSPAWNLARVATIMER):
+                        queen(AbilityId.EFFECT_INJECTLARVA, th)
+                        break
 
-            if sample_roach is None:
-                break
+    # ── Creep Tumor Spread ──────────────────────────────────────────────────
+    def _creep_tumor_spread(self) -> None:
+        """Spread creep tumors and queens with excess energy."""
+        target: Point2 = self.attack_target
 
-            damage_per_shot: float = max(
-                sample_roach.calculate_damage_vs_target(enemy)[0], 1.0
-            )
-            shots_needed: int = max(1, int(enemy_hp / damage_per_shot) + 1)
+        # Tumors: spread toward enemy
+        tumors: Units = self.structures({UnitID.CREEPTUMORBURROWED, UnitID.CREEPTUMORQUEEN})
+        for tumor in tumors:
+            self.register_behavior(TumorSpreadCreep(unit=tumor, target=target))
 
-            # Assign that many roaches (or as many as available)
-            assigned_count: int = 0
-            for r in roaches:
-                if r.tag in assigned_roaches:
-                    continue
-                if assigned_count >= shots_needed:
-                    break
-                assignments[r.tag] = enemy
-                assigned_roaches.add(r.tag)
-                assigned_count += 1
+        # Queens with excess energy (after inject) spread creep
+        for queen in self.units(UnitID.QUEEN):
+            if queen.energy >= CREEP_TUMOR_ENERGY + QUEEN_INJECT_ENERGY_COST:
+                # Only spread creep if all nearby townhalls are injected
+                nearby_ths = [
+                    th for th in self.townhalls
+                    if cy_distance_to(queen.position, th.position) < 10.0
+                ]
+                all_injected: bool = all(
+                    th.has_buff(BuffId.QUEENSPAWNLARVATIMER)
+                    for th in nearby_ths
+                ) if nearby_ths else True
+                if all_injected:
+                    self.register_behavior(
+                        QueenSpreadCreep(unit=queen, cancel_if_close_enemy=True)
+                    )
 
-        return assignments
+    # ── Micro (delegated to CombatManager) ────────────────────────────────────
+    # All micro logic lives in bot/combat/ — CombatManager.step() dispatches
+    # per-unit micro via UnitMicro, formation helpers via Formation,
+    # focus-fire via target_scoring.assign_focus_fire
 
-    # ── Zerglings: Melee chase + AOE dodge ───────────────────────────────────
-    def _control_zerglings(
-        self,
-        zerglings: list[Unit],
-        enemies: list[Unit],
-        avoid_grid: np.ndarray,
-    ) -> None:
-        for ling in zerglings:
-            maneuver = CombatManeuver()
 
-            # Priority 1: Dodge AOE (storms, biles, disruptors)
-            maneuver.add(KeepUnitSafe(unit=ling, grid=avoid_grid))
-
-            # Priority 2: Attack-move closest enemy
-            if enemies:
-                target: Unit = cy_closest_to(ling.position, enemies)
-                maneuver.add(AMove(unit=ling, target=target, success_at_distance=0.0))
-
-            self.register_behavior(maneuver)
-
-    # ── Utility helpers ──────────────────────────────────────────────────────
-    def _army_center_mass(self) -> Optional[Point2]:
-        """Center-of-mass of all own combat units."""
-        combat_units: list[Unit] = [
-            u for u in self.all_own_units
-            if u.type_id in {UnitID.ZERGLING, UnitID.ROACH, UnitID.BANELING, UnitID.QUEEN}
-        ]
-        if not combat_units:
-            return None
-        return self._unit_list_center(combat_units)
-
-    @staticmethod
-    def _unit_list_center(units: list[Unit]) -> Point2:
-        """Simple center-of-mass for a list of units."""
-        if not units:
-            return Point2((0.0, 0.0))
-        x: float = sum(u.position.x for u in units) / len(units)
-        y: float = sum(u.position.y for u in units) / len(units)
-        return Point2((x, y))
-
-    def _retreat_direction(self, from_pos: Point2) -> Point2:
-        """Unit vector pointing away from enemy start location."""
-        enemy_start: Point2 = self.enemy_start_locations[0]
-        dx: float = from_pos.x - enemy_start.x
-        dy: float = from_pos.y - enemy_start.y
-        dist: float = (dx * dx + dy * dy) ** 0.5
-        if dist < 0.1:
-            return Point2((1.0, 0.0))
-        return Point2((dx / dist, dy / dist))
+# Alias for run.py compatibility
+MicroBot = GLM_Bot
