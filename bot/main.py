@@ -34,6 +34,8 @@ IGNORE_ROLE_TYPES: set[UnitID] = {
     UnitID.OVERSEER,
     UnitID.DRONE,
     UnitID.QUEEN,  # Queens managed by QueenManager with QUEEN_* roles
+    UnitID.RAVAGERCOCOON,   # Morphing — will get ATTACKING when Ravager emerges
+    UnitID.BROODLORDCOCOON, # Morphing — will get ATTACKING when Broodlord emerges
 }
 
 
@@ -107,6 +109,27 @@ class GLM_Bot(AresBot):
             return
 
         self.mediator.assign_role(tag=unit.tag, role=UnitRole.ATTACKING)
+
+    async def on_unit_type_changed(self, unit: Unit, previous_type: UnitID) -> None:
+        """Re-assign role when a unit morphs to a new type.
+
+        Morphed units keep the same tag, so their role persists in ARES's
+        tag-based role system. However, if the previous type was in
+        IGNORE_ROLE_TYPES (e.g. Overlord → Overseer) and the new type is
+        a combat unit, we need to assign ATTACKING role. Conversely, if a
+        combat unit morphs into a non-combat form, we leave the role as-is
+        since it will be cleaned up on death.
+        """
+        await super().on_unit_type_changed(unit, previous_type)
+
+        # Combat morphs: ensure ATTACKING role for the new type
+        COMBAT_MORPH_TYPES: set[UnitID] = {
+            UnitID.RAVAGER,
+            UnitID.BROODLORD,
+            UnitID.LURKERMP,
+        }
+        if unit.type_id in COMBAT_MORPH_TYPES:
+            self.mediator.assign_role(tag=unit.tag, role=UnitRole.ATTACKING)
 
     # ── Micro (delegated to managers) ────────────────────────────────────────
     # CombatManager: bot/combat/combat.py
