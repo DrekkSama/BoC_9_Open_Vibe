@@ -145,16 +145,12 @@ class MacroManager:
         # Supply
         macro_plan.add(AutoSupply(base_location=self._ai.start_location))
 
-        # Workers — scale with base count, cap at 70
+        # Workers — always produce up to target, scale with base count, cap at 70
+        # During rush with small army, slow down worker production to free larvae
         max_workers: int = min(70, len(self._ai.townhalls) * 22)
-        idle_ths: list = [
-            th for th in self._ai.townhalls if th.is_ready and th.is_idle
-        ]
-        if not idle_ths or (
-            self._ai.supply_workers < 30
-            and not self._threats.get("rush_detected", False)
-        ):
-            macro_plan.add(BuildWorkers(to_count=max_workers))
+        if self._threats.get("rush_detected", False) and self._ai.supply_army < 16:
+            max_workers = min(max_workers, 30)
+        macro_plan.add(BuildWorkers(to_count=max_workers))
 
         # Gas — phased based on drone count and base count
         target_gas, max_pending_gas = self._gas_targets()
