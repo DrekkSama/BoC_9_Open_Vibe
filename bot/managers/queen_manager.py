@@ -10,7 +10,6 @@ import numpy as np
 from ares.cache import property_cache_once_per_frame
 from ares.consts import UnitRole
 from cython_extensions import cy_closest_to, cy_distance_to, cy_in_attack_range, cy_pick_enemy_target
-from loguru import logger
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.buff_id import BuffId
 from sc2.ids.unit_typeid import UnitTypeId as UnitID
@@ -73,7 +72,6 @@ class QueenManager:
         self._inject_queen_to_th: dict[int, int] = {}
         # Track when each defending queen last saw a threat (for grace period)
         self._defender_last_threat_time: dict[int, float] = {}
-        self._debug: bool = ai.config.get("Debug", False)
 
     def assign_new_queen(self, queen: Unit) -> None:
         """Assign a newly created queen to QUEEN_CREEP role.
@@ -95,17 +93,6 @@ class QueenManager:
         defending_queens: Units = self.ai.mediator.get_units_from_role(
             role=UnitRole.DEFENDING
         )
-
-        # ── Debug: role summary every 8 frames ──────────────────────
-        if self._debug and self.ai.state.game_loop % 8 == 0:
-            total = len(self.ai.mediator.get_own_army_dict[UnitID.QUEEN])
-            req_inj = self._required_injectors
-            req_crp = self._required_creep_spreaders
-            logger.info(
-                f"QUEENS total={total} | inject={len(inject_queens)} "
-                f"creep={len(creep_queens)} defending={len(defending_queens)} | "
-                f"req_inject={req_inj} req_creep={req_crp}"
-            )
 
         # Adjust role assignments
         self._manage_inject_role(creep_queens, inject_queens)
@@ -146,23 +133,14 @@ class QueenManager:
 
         # Don't inject during rush or with very few queens
         if self.ai.mediator.get_did_enemy_rush:
-            if self._debug:
-                logger.info("REQ_INJECT=0 (enemy rush)")
             return 0
         if num_queens < MIN_QUEENS_FOR_SPECIALIZATION:
-            if self._debug:
-                logger.info(f"REQ_INJECT=0 (queens={num_queens} < {MIN_QUEENS_FOR_SPECIALIZATION})")
             return 0
         # Too many bases to manage injects effectively
         if len(self.ai.townhalls) >= 5:
-            if self._debug:
-                logger.info("REQ_INJECT=0 (5+ bases)")
             return 0
 
-        result = len(self.ai.townhalls)
-        if self._debug:
-            logger.info(f"REQ_INJECT={result} (queens={num_queens}, ths={len(self.ai.townhalls)})")
-        return result
+        return len(self.ai.townhalls)
 
     @property_cache_once_per_frame
     def _required_creep_spreaders(self) -> int:
@@ -175,41 +153,28 @@ class QueenManager:
         num_queens: int = len(self.ai.mediator.get_own_army_dict[UnitID.QUEEN])
 
         if num_queens < MIN_QUEENS_FOR_SPECIALIZATION:
-            if self._debug:
-                logger.info(f"REQ_CREEP=0 (queens={num_queens} < {MIN_QUEENS_FOR_SPECIALIZATION})")
             return 0
 
         # Stop spreading if coverage is high or too many tumors
         coverage: float = self.ai.mediator.get_creep_coverage
         if coverage > CREEP_COVERAGE_STOP:
-            if self._debug:
-                logger.info(f"REQ_CREEP=0 (coverage={coverage:.1f}% > {CREEP_COVERAGE_STOP}%)")
             return 0
         num_tumors: int = len(
             self.ai.mediator.get_own_structures_dict[UnitID.CREEPTUMORBURROWED]
         )
         if num_tumors > MAX_TUMORS:
-            if self._debug:
-                logger.info(f"REQ_CREEP=0 (tumors={num_tumors} > {MAX_TUMORS})")
             return 0
 
         # Don't spread when under significant pressure
         ground_threats: Units = self.ai.mediator.get_main_ground_threats_near_townhall
         if ground_threats and self.ai.get_total_supply(ground_threats) >= 4.0:
-            if self._debug:
-                logger.info(f"REQ_CREEP=0 (ground threat supply={self.ai.get_total_supply(ground_threats):.1f})")
             return 0
         air_threats: Units = self.ai.mediator.get_main_air_threats_near_townhall
         if air_threats and self.ai.get_total_supply(air_threats) >= 6.0:
-            if self._debug:
-                logger.info(f"REQ_CREEP=0 (air threat supply={self.ai.get_total_supply(air_threats):.1f})")
             return 0
 
         # Scale with queen count, cap at MAX_CREEP_SPREADERS
-        result = min(MAX_CREEP_SPREADERS, max(1, num_queens - 3))
-        if self._debug:
-            logger.info(f"REQ_CREEP={result} (queens={num_queens})")
-        return result
+        return min(MAX_CREEP_SPREADERS, max(1, num_queens - 3))
 
     # ── Role Management ─────────────────────────────────────────────────────
 
@@ -339,17 +304,6 @@ class QueenManager:
                 )
                 self.ai.register_behavior(maneuver)
 
-            # ── Debug: log every 8 frames ────────────────────────────
-            if self._debug and self.ai.state.game_loop % 8 == 0:
-                orders_str = ", ".join(
-                    f"{o.ability.id.name}@{o.target}" for o in queen.orders
-                ) if queen.orders else "IDLE"
-                logger.info(
-                    f"INJECT Q tag={queen.tag} | pos={queen.position.rounded} | "
-                    f"energy={queen.energy:.0f} | th={assigned_th.tag} | "
-                    f"dist={dist:.1f} | orders=[{orders_str}]"
-                )
-
     def _control_creep_queens(self, creep_queens: Units) -> None:
         """Creep queens: spread tumors, transfuse if needed.
 
@@ -387,17 +341,6 @@ class QueenManager:
                 )
 
             self.ai.register_behavior(maneuver)
-
-            # ── Debug: log every 8 frames to avoid spam ──────────────
-            if self._debug and self.ai.state.game_loop % 8 == 0:
-                orders_str = ", ".join(
-                    f"{o.ability.id.name}@{o.target}" for o in queen.orders
-                ) if queen.orders else "IDLE"
-                logger.info(
-                    f"CREEP Q tag={queen.tag} | pos={queen.position.rounded} | "
-                    f"energy={queen.energy:.0f} | has_energy={has_energy} | "
-                    f"transfuse_added={transfuse_added} | orders=[{orders_str}]"
-                )
 
     # ── Threat-Response Defense ─────────────────────────────────────────────
 
@@ -461,12 +404,6 @@ class QueenManager:
                     # Remove from local list so we don't pick the same queen twice
                     creep_queens = creep_queens.filter(lambda q: q.tag != closest_creep.tag)
 
-                    if self._debug:
-                        logger.info(
-                            f"DEFENCE: Pulling queen tag={closest_creep.tag} "
-                            f"from CREEP → DEFENDING (threats near base)"
-                        )
-
         # ── Return defenders to creep duty when threats clear ─────────
         else:
             queens_to_return: list[int] = []
@@ -481,11 +418,6 @@ class QueenManager:
             for tag in queens_to_return:
                 self.ai.mediator.assign_role(tag=tag, role=UnitRole.QUEEN_CREEP)
                 self._defender_last_threat_time.pop(tag, None)
-                if self._debug:
-                    logger.info(
-                        f"DEFENCE: Returning queen tag={tag} "
-                        f"DEFENDING → CREEP (threats cleared, grace period elapsed)"
-                    )
 
         # ── Clean up stale threat timestamps ──────────────────────────
         defender_tags: set[int] = {q.tag for q in defending_queens}
@@ -568,17 +500,6 @@ class QueenManager:
                         )
 
             self.ai.register_behavior(maneuver)
-
-            # ── Debug: log every 8 frames to avoid spam ──────────────
-            if self._debug and self.ai.state.game_loop % 8 == 0:
-                orders_str = ", ".join(
-                    f"{o.ability.id.name}@{o.target}" for o in queen.orders
-                ) if queen.orders else "IDLE"
-                logger.info(
-                    f"DEF Q tag={queen.tag} | pos={queen.position.rounded} | "
-                    f"energy={queen.energy:.0f} | enemies={len(enemies_near_base)} | "
-                    f"orders=[{orders_str}]"
-                )
 
     def _spread_tumors(self) -> None:
         """Spread existing creep tumors toward enemy."""
