@@ -50,16 +50,20 @@ Builds:
                   [enemy_nat_vision, enemy_nat_hg_spot]
             - 15 spawningpool
             - 15 hatchery
-            - 14 overlord
-            - 16 queen
-            - 15 gas
+            - 15 overlord
+            - 15 queen
+            - 16 gas
             - 17 queen
-            - 21 roachwarren
             - 21 overlord
-            - 16 hatchery
+            - 24 Zergling x2
+            - 25 ZERGLINGMOVEMENTSPEED
+            - 25 hatchery
+            - 25 roachwarren
             - 28 overlord
             - 35 gas
             - 35 lair
             - 35 queen
-            - 36 roach x5
-
+            - 35 gas x2
+            - 36 evolutionchamber
+            - 36 roach x2
+        
