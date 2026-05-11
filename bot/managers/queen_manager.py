@@ -3,6 +3,8 @@
 #   New queens default to QUEEN_CREEP. Inject queens assigned per-townhall.
 #   Threat-response defense temporarily steals creep queens to DEFENDING role.
 #   When threats clear, queens return to QUEEN_CREEP after a grace period.
+#   Energy priority: inject > transfuse > creep tumor. Queens reserve 25 energy
+#   for inject if near a TH that needs it; inject queens spread creep with surplus.
 #   Uses property_cache_once_per_frame for role requirement calculations.
 # Limitations: No nydus queen support, no offensive queen mode yet
 
@@ -32,8 +34,13 @@ from ares.behaviors.combat.individual import (
 QUEEN_INJECT_ENERGY: float = 25.0
 CREEP_TUMOR_ENERGY: float = 25.0
 TRANSFUSE_ENERGY: float = 50.0
+# Energy threshold for inject queens to also spread creep
+# Must have enough for inject (25) + tumor (25) = 50 surplus after reserving inject
+INJECT_SURPLUS_FOR_CREEP: float = QUEEN_INJECT_ENERGY + CREEP_TUMOR_ENERGY
 # How close a queen must be to a townhall for inject
 INJECT_RANGE: float = 10.0
+# How close a creep queen must be to a TH to consider injecting
+CREEP_QUEEN_INJECT_RANGE: float = 12.0
 # Max creep spreaders when not under pressure
 MAX_CREEP_SPREADERS: int = 5
 # Min queens before we start assigning inject/creep roles
@@ -247,12 +254,13 @@ class QueenManager:
     # ── Queen Behaviors ─────────────────────────────────────────────────────
 
     def _control_inject_queens(self, inject_queens: Units) -> None:
-        """Inject queens: move to assigned townhall, inject when ready.
+        """Inject queens: inject assigned TH, spread creep with surplus energy.
 
-        Uses ARES PathUnitToTarget for movement (not raw move commands)
-        so queens path safely around danger. Inject is issued directly
-        since it's a non-combat ability that shouldn't conflict with
-        combat behaviors.
+        Energy priority: inject > transfuse > creep tumor.
+        - Always inject if TH needs it and queen has 25 energy.
+        - If TH is already injected, spread creep with surplus energy
+          (energy >= 50, i.e. enough for inject + tumor reserve).
+        - If not enough surplus, just move toward TH.
         """
         grid: np.ndarray = self.ai.mediator.get_ground_avoidance_grid
 
@@ -287,16 +295,45 @@ class QueenManager:
             if assigned_th is None:
                 continue
 
-            # If we have energy and the TH needs inject, do it
-            if queen.energy >= QUEEN_INJECT_ENERGY:
-                if not assigned_th.has_buff(BuffId.QUEENSPAWNLARVATIMER):
-                    queen(AbilityId.EFFECT_INJECTLARVA, assigned_th)
-                    continue
+            # Priority 1: Inject if TH needs it and we have energy
+            th_needs_inject: bool = not assigned_th.has_buff(
+                BuffId.QUEENSPAWNLARVATIMER
+            )
+            if queen.energy >= QUEEN_INJECT_ENERGY and th_needs_inject:
+                queen(AbilityId.EFFECT_INJECTLARVA, assigned_th)
+                continue
 
-            # Move toward assigned TH using ARES pathing
-            dist: float = cy_distance_to(queen.position, assigned_th.position)
-            if dist > INJECT_RANGE:
+            # Priority 2: Transfuse injured friendlies
+            if queen.energy >= TRANSFUSE_ENERGY:
                 maneuver: CombatManeuver = CombatManeuver()
+                maneuver.add(UseTransfuse(unit=queen, targets=self.ai.all_own_units))
+                # Still move toward TH after transfuse
+                dist: float = cy_distance_to(queen.position, assigned_th.position)
+                if dist > INJECT_RANGE:
+                    maneuver.add(
+                        PathUnitToTarget(
+                            unit=queen, grid=grid, target=assigned_th.position
+                        )
+                    )
+                self.ai.register_behavior(maneuver)
+                continue
+
+            # Priority 3: Spread creep with surplus energy
+            # Only if TH is already injected (or we don't have inject energy)
+            # and we have enough surplus for tumor while reserving inject
+            has_surplus: bool = queen.energy >= INJECT_SURPLUS_FOR_CREEP
+            if has_surplus and not th_needs_inject:
+                maneuver = CombatManeuver()
+                maneuver.add(
+                    QueenSpreadCreep(unit=queen, cancel_if_close_enemy=True)
+                )
+                self.ai.register_behavior(maneuver)
+                continue
+
+            # Priority 4: Move toward assigned TH using ARES pathing
+            dist = cy_distance_to(queen.position, assigned_th.position)
+            if dist > INJECT_RANGE:
+                maneuver = CombatManeuver()
                 maneuver.add(
                     PathUnitToTarget(
                         unit=queen, grid=grid, target=assigned_th.position
@@ -305,33 +342,48 @@ class QueenManager:
                 self.ai.register_behavior(maneuver)
 
     def _control_creep_queens(self, creep_queens: Units) -> None:
-        """Creep queens: spread tumors, transfuse if needed.
+        """Creep queens: inject nearby THs first, then spread tumors.
+
+        Energy priority: inject > transfuse > creep tumor.
+        - If near an un-injected TH and have 25 energy, inject it.
+        - Reserve 25 energy for inject if near a TH that will need it soon
+          (i.e. only spread creep if energy >= 50 when near an injectable TH).
+        - Otherwise spread creep normally.
 
         Each queen gets exactly ONE CombatManeuver per frame.
-        QueenSpreadCreep is the PRIMARY behavior — it handles movement
-        to creep edge internally and has built-in safety via
-        cancel_if_close_enemy. We do NOT add KeepUnitSafe before it,
-        because that causes queens to get stuck dodging nothing.
+        QueenSpreadCreep handles movement to creep edge internally and
+        has built-in safety via cancel_if_close_enemy.
         """
         for queen in creep_queens:
             maneuver: CombatManeuver = CombatManeuver()
 
-            # Priority 1: Transfuse injured friendlies (cheap check first)
-            transfuse_added: bool = False
+            # Priority 1: Inject nearby un-injected townhall
+            # Creep queens near a TH that needs inject should do it first
+            nearby_th_needing_inject: Unit | None = (
+                self._find_nearby_th_needing_inject(queen)
+            )
+            if nearby_th_needing_inject and queen.energy >= QUEEN_INJECT_ENERGY:
+                queen(AbilityId.EFFECT_INJECTLARVA, nearby_th_needing_inject)
+                continue
+
+            # Priority 2: Transfuse injured friendlies
             if queen.energy >= TRANSFUSE_ENERGY:
-                transfuse_added = True
                 maneuver.add(UseTransfuse(unit=queen, targets=self.ai.all_own_units))
 
-            # Priority 2: Spread creep (handles movement + safety internally)
-            has_energy: bool = queen.energy >= CREEP_TUMOR_ENERGY
+            # Priority 3: Spread creep (with energy reservation for inject)
+            # If near a TH that will need inject soon, reserve 25 energy
+            near_injectable_th: bool = nearby_th_needing_inject is not None
+            energy_floor: float = (
+                QUEEN_INJECT_ENERGY if near_injectable_th else 0.0
+            )
+            has_energy: bool = queen.energy >= CREEP_TUMOR_ENERGY + energy_floor
+
             if has_energy:
                 maneuver.add(
                     QueenSpreadCreep(unit=queen, cancel_if_close_enemy=True)
                 )
             else:
-                # Not enough energy: QueenSpreadCreep with pre_move will
-                # move queen toward the creep edge so it's ready when
-                # energy arrives
+                # Not enough energy: pre-move toward creep edge
                 maneuver.add(
                     QueenSpreadCreep(
                         unit=queen,
@@ -511,6 +563,29 @@ class QueenManager:
             self.ai.register_behavior(TumorSpreadCreep(unit=tumor, target=target))
 
     # ── Helpers ─────────────────────────────────────────────────────────────
+
+    def _find_nearby_th_needing_inject(self, queen: Unit) -> Unit | None:
+        """Find a nearby townhall that needs inject and isn't covered by an inject queen.
+
+        Used by creep queens to opportunistically inject when they're near
+        an un-injected TH. Only considers THs within CREEP_QUEEN_INJECT_RANGE
+        that don't already have an inject queen assigned.
+
+        Perf note: O(townhalls) per queen, typically 1-4 THs.
+        """
+        inject_th_tags: set[int] = set(self._inject_queen_to_th.values())
+        for th in self.ai.townhalls:
+            if th.build_progress < 0.95:
+                continue
+            if th.has_buff(BuffId.QUEENSPAWNLARVATIMER):
+                continue
+            # Skip THs that already have a dedicated inject queen
+            if th.tag in inject_th_tags:
+                continue
+            dist: float = cy_distance_to(queen.position, th.position)
+            if dist <= CREEP_QUEEN_INJECT_RANGE:
+                return th
+        return None
 
     def _enemies_near_bases(self) -> Units:
         """Get enemy units near any of our townhalls.

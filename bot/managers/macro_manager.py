@@ -1,12 +1,14 @@
-# Purpose: Centralized macro management — workers, supply, gas, spawning,
-#   tech, upgrades, expansions, and reactive building.
+# Purpose: Centralized macro management — workers, supply, gas, queens,
+#   spawning, tech, upgrades, expansions, and reactive building.
 # Key Decisions: All MacroPlan behaviors live here. Research and response
 #   logic folded in from their old standalone modules. The attack_target
 #   property is also owned here since it's a macro-level decision.
+#   Queen production: target = ready bases + 1, produced via SpawnController.
 # Limitations: No nydus network support yet, no dynamic composition
 #   switching beyond air detection.
 
 from cython_extensions import cy_closest_to
+from cython_extensions import cy_unit_pending
 from sc2.ids.unit_typeid import UnitTypeId as UnitID
 from sc2.ids.upgrade_id import UpgradeId as UpgradeID
 from sc2.position import Point2
@@ -77,6 +79,10 @@ AIR_STRUCTURES: set[UnitID] = {
 LIGHT_UNIT_TYPES: set[UnitID] = {
     UnitID.ZERGLING, UnitID.ZEALOT, UnitID.ADEPT, UnitID.MARINE,
 }
+
+# Queen production: target = ready bases + 1 extra queen
+# Under rush pressure, cap at bases (no extra) to save larvae/minerals
+QUEEN_RUSH_SUPPLY_THRESHOLD: float = 16.0
 
 # Response constants
 SAFETY_ROACH_COUNT: int = 5
@@ -165,6 +171,12 @@ class MacroManager:
         )
         macro_plan.add(SpawnController(army_comp))
 
+        # Queen production — target = ready bases + 1
+        # Uses direct train() instead of SpawnController because queens
+        # need a count-based target (not proportion-based), and they're
+        # trained from Hatch/Lair/Hive (not larvae).
+        self._produce_queens()
+
         # Tech — Lair when we have enough queens and gas
         lair_tech: bool = (
             len(structure_dict[UnitID.LAIR]) > 0
@@ -240,6 +252,62 @@ class MacroManager:
             target_gas = 4
 
         return (target_gas, max_pending)
+
+    # ── Queen Production Logic ─────────────────────────────────────────────
+
+    def _queen_target(self) -> int:
+        """Determine target queen count: ready bases + 1 extra.
+
+        Under rush pressure with a small army, skip the extra queen
+        to conserve larvae and minerals for army units.
+
+        Returns:
+            Target number of queens we want to have (including pending).
+        """
+        ai = self._ai
+        base_count: int = len(ai.townhalls.ready)
+
+        # No bases = no queens
+        if base_count == 0:
+            return 0
+
+        # Target: bases + 1, but under rush pressure cap at bases
+        target: int = base_count + 1
+        if self._threats.get("rush_detected", False) and ai.supply_army < QUEEN_RUSH_SUPPLY_THRESHOLD:
+            target = base_count
+
+        return target
+
+    def _produce_queens(self) -> None:
+        """Train a queen from an idle Hatch/Lair/Hive if we need more.
+
+        Queens are trained from townhalls (not larvae), so we use
+        direct train() instead of SpawnController. Only trains one
+        queen per frame to avoid blocking larvae production on
+        other townhalls.
+
+        Perf note: O(townhalls) to find idle one, typically 2-4.
+        """
+        ai = self._ai
+
+        # Check if we need more queens
+        current_queens: int = len(ai.mediator.get_own_army_dict[UnitID.QUEEN])
+        pending_queens: int = cy_unit_pending(ai, UnitID.QUEEN)
+        total_queens: int = current_queens + pending_queens
+        target: int = self._queen_target()
+
+        if total_queens >= target or target == 0:
+            return
+
+        # Find an idle Hatch/Lair/Hive to train from
+        # Queens cost 150 minerals, 0 gas, 2 supply
+        if not ai.can_afford(UnitID.QUEEN):
+            return
+
+        for th in ai.townhalls.ready:
+            if th.is_idle:
+                th.train(UnitID.QUEEN)
+                return  # Only one per frame
 
     # ── Expansion Logic ─────────────────────────────────────────────────────
 
