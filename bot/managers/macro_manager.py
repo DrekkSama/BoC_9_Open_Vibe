@@ -8,6 +8,8 @@
 #   Reactive tech (Hydralisk Den) built only on air threat detection.
 #   Gated upgrades (Grooved Spines, Centrifugal Hooks) only included when
 #   their prerequisite building exists, preventing auto-tech-up.
+#   Expansion gated on base saturation: won't take a new base until existing
+#   ones are near-full. Worker target scales with total (ready+pending) bases.
 # Limitations: No nydus network support yet, no dynamic composition
 #   switching beyond air detection.
 
@@ -37,17 +39,29 @@ BEGIN_ATTACK_SUPPLY: float = 6.0
 MID_GAME_TIME: float = 360.0
 NATURAL_TIMING_THRESHOLD: float = 210.0  # 3:30
 
-# Expansion phases: (min_drone_count, target_base_count, max_pending_expansions)
+# Saturation: drones per base for full mineral+gas saturation
+# 16 mineral patches + 6 gas (2 geysers × 3) = 22 ideal, but 20 is
+# a practical threshold — bases rarely have 2 full geysers early on.
+DRONES_PER_SATURATED_BASE: int = 20
+DRONES_PER_FULLY_SATURATED_BASE: int = 22
+
+# Expansion phases: (min_drone_count, target_base_count)
+# max_pending is always 1 — never build two bases at once.
 # Phase 1: Opening (post-build) — 2 bases from build order, hold at 2
 # Phase 2: Early mid-game — 3 bases once we have 30+ drones
 # Phase 3: Mid-game — 4 bases once we have 44+ drones
 # Phase 4: Late-game — expand aggressively when economy is saturated
-EXPANSION_PHASES: list[tuple[int, int, int]] = [
-    (0, 2, 1),    # Phase 1: hold at 2 bases (natural from build order)
-    (30, 3, 1),   # Phase 2: take 3rd when 30+ drones
-    (44, 4, 2),   # Phase 3: take 4th when 44+ drones
-    (60, 99, 3),  # Phase 4: expand freely when 60+ drones
+EXPANSION_PHASES: list[tuple[int, int]] = [
+    (0, 2),    # Phase 1: hold at 2 bases (natural from build order)
+    (30, 3),   # Phase 2: take 3rd when 30+ drones
+    (44, 4),   # Phase 3: take 4th when 44+ drones
+    (60, 99),  # Phase 4: expand freely when 60+ drones
 ]
+
+# Worker priority: below this drone count, always produce workers
+# even if townhalls are busy with army. Above this, only build
+# workers when townhalls are idle (army gets larvae priority).
+WORKER_PRIORITY_THRESHOLD: int = 30
 
 # Gas phases: (min_drone_count, gas_per_base, max_pending_geysers)
 # Phase 1: Post-build — 1 gas per base (2 total), enough for ling speed + Lair
@@ -172,12 +186,25 @@ class MacroManager:
         # Supply
         macro_plan.add(AutoSupply(base_location=self._ai.start_location))
 
-        # Workers — always produce up to target, scale with base count, cap at 70
-        # During rush with small army, slow down worker production to free larvae
-        max_workers: int = min(70, len(self._ai.townhalls) * 22)
+        # Workers — produce enough to saturate all existing + pending bases
+        # Priority: below WORKER_PRIORITY_THRESHOLD, always build workers.
+        # Above it, only build workers when townhalls are idle so army
+        # gets larvae priority. MacroPlan stops after first action, so
+        # BuildWorkers before SpawnController = workers first, but we
+        # skip workers when army needs larvae more.
+        total_bases: int = len(self._ai.townhalls.ready) + self._ai.structure_pending(
+            self._ai.base_townhall_type
+        )
+        max_workers: int = min(80, total_bases * DRONES_PER_FULLY_SATURATED_BASE)
         if self._threats.get("rush_detected", False) and self._ai.supply_army < 16:
             max_workers = min(max_workers, 30)
-        macro_plan.add(BuildWorkers(to_count=max_workers))
+        idle_townhalls: bool = bool(self._ai.townhalls.idle)
+        need_workers: bool = (
+            self._ai.supply_workers < WORKER_PRIORITY_THRESHOLD
+            or idle_townhalls
+        )
+        if need_workers:
+            macro_plan.add(BuildWorkers(to_count=max_workers))
 
         # Gas — phased based on drone count and base count
         target_gas, max_pending_gas = self._gas_targets()
@@ -336,36 +363,60 @@ class MacroManager:
 
     # ── Expansion Logic ─────────────────────────────────────────────────────
 
+    def _bases_saturated(self, threshold: float = 0.85) -> bool:
+        """Check if all existing (ready) bases are saturated enough to expand.
+
+        A base is considered saturated at `threshold * DRONES_PER_SATURATED_BASE`
+        drones. Default 0.85 means ~17/20 drones per base. Pending bases are
+        excluded — we want existing bases saturated before taking more.
+
+        Args:
+            threshold: Fraction of full saturation required (0.0–1.0).
+
+        Returns:
+            True if every ready base has enough drones.
+        """
+        ai = self._ai
+        ready_bases: int = len(ai.townhalls.ready)
+        if ready_bases == 0:
+            return False
+        drones_per_base: float = ai.supply_workers / ready_bases
+        return drones_per_base >= DRONES_PER_SATURATED_BASE * threshold
+
     def _expansion_targets(self) -> tuple[int, int]:
         """Determine target base count and max pending expansions.
 
-        Uses a phased approach: expand conservatively early, then more
-        aggressively as the economy matures. Under rush pressure, block
-        expansions entirely until we have enough army to survive.
+        Gates expansion on base saturation: existing bases must be near-full
+        before we take more. Always caps max_pending at 1 — never build
+        two bases at once. Under rush pressure, block expansions.
 
         Returns:
             (target_bases, max_pending) tuple for ExpansionController.
         """
         ai = self._ai
         drone_count: int = ai.supply_workers
+        ready_bases: int = len(ai.townhalls.ready)
+        pending_bases: int = ai.structure_pending(ai.base_townhall_type)
 
         # Under rush pressure with small army: block all expansion
         if self._threats.get("rush_detected", False) and ai.supply_army < 16:
-            return (len(ai.townhalls.ready), 0)
+            return (ready_bases, 0)
+
+        # If a base is already pending, don't start another one
+        if pending_bases >= 1:
+            return (ready_bases + pending_bases, 1)
 
         # Walk through phases, pick the highest one we qualify for
         target_bases: int = EXPANSION_PHASES[0][1]
-        max_pending: int = EXPANSION_PHASES[0][2]
-        for min_drones, bases, pending in EXPANSION_PHASES:
+        for min_drones, bases in EXPANSION_PHASES:
             if drone_count >= min_drones:
                 target_bases = bases
-                max_pending = pending
 
-        # If floating minerals, allow one more pending expansion
-        if ai.minerals > 1250 and max_pending < 4:
-            max_pending += 1
+        # Saturation gate: don't expand unless existing bases are saturated
+        if target_bases > ready_bases and not self._bases_saturated(threshold=0.85):
+            target_bases = ready_bases
 
-        return (target_bases, max_pending)
+        return (target_bases, 1)
 
     # ── Upgrades ────────────────────────────────────────────────────────────
 
