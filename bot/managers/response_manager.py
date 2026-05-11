@@ -46,15 +46,30 @@ def assess_threats(ai) -> dict[str, bool]:
         if not enemy_naturals:
             threats["no_natural"] = True
 
-    # ── Air signs (fusion core, stargate, starport techlab) ─────────────
+    # ── Air signs (air tech structures OR visible air units) ────────────
     air_structures: set[UnitID] = {
         UnitID.FUSIONCORE, UnitID.STARGATE, UnitID.STARPORTTECHLAB,
         UnitID.FLEETBEACON,
+    }
+    air_unit_types: set[UnitID] = {
+        # Protoss
+        UnitID.VOIDRAY, UnitID.CARRIER, UnitID.ORACLE, UnitID.PHOENIX,
+        UnitID.TEMPEST, UnitID.MOTHERSHIP,
+        # Terran
+        UnitID.MEDIVAC, UnitID.VIKINGFIGHTER, UnitID.VIKINGASSAULT,
+        UnitID.BANSHEE, UnitID.RAVEN, UnitID.BATTLECRUISER, UnitID.LIBERATOR,
+        # Zerg
+        UnitID.MUTALISK, UnitID.CORRUPTOR, UnitID.BROODLORD,
     }
     for structure in ai.enemy_structures:
         if structure.type_id in air_structures:
             threats["air_signs"] = True
             break
+    if not threats["air_signs"]:
+        for unit in ai.enemy_units:
+            if unit.type_id in air_unit_types and not unit.is_memory:
+                threats["air_signs"] = True
+                break
 
     # ── Proxy signs (enemy structures near our base) ────────────────────
     for structure in ai.enemy_structures:

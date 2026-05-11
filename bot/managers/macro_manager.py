@@ -75,6 +75,19 @@ AIR_STRUCTURES: set[UnitID] = {
     UnitID.FLEETBEACON,
 }
 
+# Air unit types that warrant Hydralisk production
+# Excludes non-combat air (Overlord, Overseer, Observer, WarpPrism)
+AIR_UNIT_TYPES: set[UnitID] = {
+    # Protoss
+    UnitID.VOIDRAY, UnitID.CARRIER, UnitID.ORACLE, UnitID.PHOENIX,
+    UnitID.TEMPEST, UnitID.MOTHERSHIP,
+    # Terran
+    UnitID.MEDIVAC, UnitID.VIKINGFIGHTER, UnitID.VIKINGASSAULT,
+    UnitID.BANSHEE, UnitID.RAVEN, UnitID.BATTLECRUISER, UnitID.LIBERATOR,
+    # Zerg
+    UnitID.MUTALISK, UnitID.CORRUPTOR, UnitID.BROODLORD,
+}
+
 # Light unit types for mass detection
 LIGHT_UNIT_TYPES: set[UnitID] = {
     UnitID.ZERGLING, UnitID.ZEALOT, UnitID.ADEPT, UnitID.MARINE,
@@ -346,8 +359,21 @@ class MacroManager:
 
     @property
     def _required_upgrades(self) -> list[UpgradeID]:
-        """Upgrade list for UpgradeController."""
-        return UPGRADE_PRIORITY
+        """Upgrade list for UpgradeController.
+
+        Grooved Spines is only included when a Hydralisk Den exists,
+        which only happens reactively when air threats are detected.
+        This prevents UpgradeController from auto-teching to a Hydralisk Den.
+        """
+        upgrades: list[UpgradeID] = [
+            u for u in UPGRADE_PRIORITY
+            if u != UpgradeID.EVOLVEGROOVEDSPINES
+        ]
+        # Only include Grooved Spines when we have a ready Hydra Den
+        # (the den is built reactively by _respond_to_threats on air_signs)
+        if self._ai.structures(UnitID.HYDRALISKDEN).ready.exists:
+            upgrades.append(UpgradeID.EVOLVEGROOVEDSPINES)
+        return upgrades
 
     @property
     def _upgrades_enabled(self) -> bool:
@@ -402,11 +428,16 @@ class MacroManager:
             if not enemy_naturals:
                 self._threats["no_natural"] = True
 
-        # Air signs
+        # Air signs: enemy air tech structures OR visible air units
         for structure in ai.enemy_structures:
             if structure.type_id in AIR_STRUCTURES:
                 self._threats["air_signs"] = True
                 break
+        if not self._threats["air_signs"]:
+            for unit in ai.enemy_units:
+                if unit.type_id in AIR_UNIT_TYPES and not unit.is_memory:
+                    self._threats["air_signs"] = True
+                    break
 
         # Proxy signs
         for structure in ai.enemy_structures:
