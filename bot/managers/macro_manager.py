@@ -4,6 +4,10 @@
 #   logic folded in from their old standalone modules. The attack_target
 #   property is also owned here since it's a macro-level decision.
 #   Queen production: target = ready bases + 1, produced via SpawnController.
+#   Proactive tech (Baneling Nest, Infestation Pit) built on economy thresholds.
+#   Reactive tech (Hydralisk Den) built only on air threat detection.
+#   Gated upgrades (Grooved Spines, Centrifugal Hooks) only included when
+#   their prerequisite building exists, preventing auto-tech-up.
 # Limitations: No nydus network support yet, no dynamic composition
 #   switching beyond air detection.
 
@@ -145,9 +149,13 @@ class MacroManager:
         # Always mine
         self._ai.register_behavior(Mining())
 
-        # Only run dynamic macro after the opening build completes
+        # Failsafe: if build is still active but minerals are piling up,
+        # force-complete the build so dynamic macro can take over
         if not self._ai.build_order_runner.build_completed:
-            return
+            if self._ai.minerals >= 1500:
+                self._ai.build_order_runner.set_build_completed()
+            else:
+                return
 
         self._assess_threats()
         self._do_macro_plan()
@@ -181,8 +189,12 @@ class MacroManager:
         army_comp: dict[UnitID, dict] = get_army_comp(
             self._ai.time,
             air_threat=self._threats.get("air_signs", False),
+            drone_count=self._ai.supply_workers,
         )
         macro_plan.add(SpawnController(army_comp))
+
+        # Proactive tech buildings — built when economy supports them
+        self._build_proactive_tech()
 
         # Queen production — target = ready bases + 1
         # Uses direct train() instead of SpawnController because queens
@@ -361,18 +373,26 @@ class MacroManager:
     def _required_upgrades(self) -> list[UpgradeID]:
         """Upgrade list for UpgradeController.
 
-        Grooved Spines is only included when a Hydralisk Den exists,
-        which only happens reactively when air threats are detected.
-        This prevents UpgradeController from auto-teching to a Hydralisk Den.
+        Reactive-tech upgrades are only included when their prerequisite
+        building exists, preventing UpgradeController from auto-teching
+        to buildings we don't want yet:
+        - Grooved Spines: only when Hydralisk Den exists (air reaction)
+        - Centrifugal Hooks: only when Baneling Nest exists (built proactively)
         """
-        upgrades: list[UpgradeID] = [
-            u for u in UPGRADE_PRIORITY
-            if u != UpgradeID.EVOLVEGROOVEDSPINES
-        ]
-        # Only include Grooved Spines when we have a ready Hydra Den
-        # (the den is built reactively by _respond_to_threats on air_signs)
-        if self._ai.structures(UnitID.HYDRALISKDEN).ready.exists:
-            upgrades.append(UpgradeID.EVOLVEGROOVEDSPINES)
+        # Upgrades that require a reactive/proactive building — exclude by default
+        gated_upgrades: dict[UpgradeID, UnitID] = {
+            UpgradeID.EVOLVEGROOVEDSPINES: UnitID.HYDRALISKDEN,
+            UpgradeID.CENTRIFICALHOOKS: UnitID.BANELINGNEST,
+        }
+
+        upgrades: list[UpgradeID] = []
+        for u in UPGRADE_PRIORITY:
+            if u in gated_upgrades:
+                required_building: UnitID = gated_upgrades[u]
+                if self._ai.structures(required_building).ready.exists:
+                    upgrades.append(u)
+            else:
+                upgrades.append(u)
         return upgrades
 
     @property
@@ -397,6 +417,41 @@ class MacroManager:
                 continue
             self._ai.research(upgrade_id)
             break  # Only one upgrade per frame
+
+    # ── Proactive Tech Buildings ────────────────────────────────────────────
+
+    def _build_proactive_tech(self) -> None:
+        """Build tech buildings when the economy can support them.
+
+        Baneling Nest: built once we have 24+ drones (early game economy
+        stable enough to afford banelings without starving roach production).
+        Infestation Pit: built once we have 36+ drones (mid-game economy
+        ready for gas-heavy caster support).
+        These are proactive, not reactive — they're built because the
+        composition needs them, not because of a threat.
+        """
+        ai = self._ai
+
+        # Baneling Nest: needed for banelings in early comp
+        if (
+            ai.supply_workers >= 24
+            and not ai.structures(UnitID.BANELINGNEST).exists
+            and not ai.already_pending(UnitID.BANELINGNEST)
+            and ai.can_afford(UnitID.BANELINGNEST)
+        ):
+            ai.build(UnitID.BANELINGNEST, near=ai.start_location)
+
+        # Infestation Pit: needed for infestors in mid comp
+        # Only build when economy is ready (36+ drones) and Lair is up
+        if (
+            ai.supply_workers >= 36
+            and (ai.structures(UnitID.LAIR).ready.exists
+                 or ai.structures(UnitID.HIVE).ready.exists)
+            and not ai.structures(UnitID.INFESTATIONPIT).exists
+            and not ai.already_pending(UnitID.INFESTATIONPIT)
+            and ai.can_afford(UnitID.INFESTATIONPIT)
+        ):
+            ai.build(UnitID.INFESTATIONPIT, near=ai.start_location)
 
     # ── Threat Assessment ──────────────────────────────────────────────────
 
