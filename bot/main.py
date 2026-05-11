@@ -78,12 +78,10 @@ class GLM_Bot(AresBot):
             if self.get_total_supply(forces) >= BEGIN_ATTACK_SUPPLY:
                 self._macro_mgr.start_attack()
 
-        if (
-            self._macro_mgr is not None
-            and self._macro_mgr.commenced_attack
-            and forces
-            and self._combat_mgr is not None
-        ):
+        # Always run combat micro — even during build order, units need
+        # to rally and defend. commenced_attack controls aggression,
+        # not whether units get controlled at all.
+        if forces and self._combat_mgr is not None:
             self._combat_mgr.step(forces)
 
         # ── Queen management (always run) ───────────────────────────────────

@@ -1,5 +1,7 @@
 # Purpose: Core army control — squad dispatch, engagement decisions, micro entry point
-# Key Decisions: ARES squad system, can_win_fight for engagement, hysteresis for stability
+# Key Decisions: ARES squad system, can_win_fight for engagement, hysteresis for stability.
+#   Group behaviors (PathGroupToTarget, AMoveGroup) for map movement to keep army together.
+#   Individual behaviors for combat micro when enemies are near.
 # Limitations: No neural parasite, no flying squad separation yet
 
 from itertools import cycle
@@ -14,6 +16,7 @@ from sc2.units import Units
 
 from ares import AresBot
 from ares.behaviors.combat import CombatManeuver
+from ares.behaviors.combat.group import AMoveGroup, PathGroupToTarget
 from ares.consts import (
     ALL_STRUCTURES,
     LOSS_MARGINAL_OR_WORSE,
@@ -27,6 +30,8 @@ from bot.combat.unit_micro import UnitMicro
 
 # ── Constants ────────────────────────────────────────────────────────────────
 ATTACKING_SQUAD_RADIUS: float = 9.0
+# Distance (squared) to consider enemies "near" a squad for group vs individual
+ENEMY_NEAR_SQUAD_DISTANCE_SQ: float = 225.0  # 15.0^2
 
 # Unit types to ignore when counting enemies
 COMMON_UNIT_IGNORE_TYPES: set[UnitID] = {
@@ -89,7 +94,13 @@ class CombatManager:
         return ai.main_base_ramp.top_center.towards(ai.start_location, 3.0)
 
     def step(self, forces: Units) -> None:
-        """Main micro dispatch using ARES squad system."""
+        """Main micro dispatch using ARES squad system.
+
+        Uses group behaviors (PathGroupToTarget, AMoveGroup) when the squad
+        is moving across the map with no enemies nearby — this keeps the
+        army together instead of stringing out. Falls through to per-unit
+        micro when enemies are close enough to engage.
+        """
         ai = self._ai
 
         # ── Check if we should be aggressive ─────────────────────────────
@@ -109,14 +120,43 @@ class CombatManager:
             if not squad_units:
                 continue
 
+            squad_tags: set[int] = squad.tags
+            squad_position: Point2 = squad.squad_position
+
             # ── Get nearby enemies for this squad ─────────────────────────
             all_close_enemy: Units = ai.mediator.get_units_in_range(
-                start_points=[squad.squad_position],
+                start_points=[squad_position],
                 distances=18.5,
                 query_tree=UnitTreeQueryType.AllEnemy,
             )[0].filter(
                 lambda u: u.type_id not in COMMON_UNIT_IGNORE_TYPES
             )
+
+            # ── Group movement when no enemies nearby ─────────────────────
+            # If no enemies are close to the squad, move as a group to keep
+            # the army together. This prevents units from stringing out
+            # across the map since group behaviors issue one action for all.
+            if not all_close_enemy:
+                group_maneuver: CombatManeuver = CombatManeuver()
+                grid: np.ndarray = ai.mediator.get_ground_grid
+                group_maneuver.add(
+                    PathGroupToTarget(
+                        start=squad_position,
+                        group=squad_units,
+                        group_tags=squad_tags,
+                        grid=grid,
+                        target=target,
+                    )
+                )
+                group_maneuver.add(
+                    AMoveGroup(
+                        group=squad_units,
+                        group_tags=squad_tags,
+                        target=target,
+                    )
+                )
+                ai.register_behavior(group_maneuver)
+                continue
 
             # ── Engagement tracking ───────────────────────────────────────
             self._track_squad_engagement(squad, all_close_enemy, forces)
