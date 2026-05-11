@@ -53,6 +53,7 @@ class UnitMicro:
         self._ai: AresBot = ai
         # Manual cooldown trackers
         self._bile_cd: dict[int, int] = {}
+        self._fungal_global_cd: int = 0
 
     def execute(
         self,
