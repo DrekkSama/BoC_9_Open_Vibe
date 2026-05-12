@@ -65,6 +65,11 @@ EXPANSION_PHASES: list[tuple[int, int]] = [
 # workers when townhalls are idle (army gets larvae priority).
 WORKER_PRIORITY_THRESHOLD: int = 30
 
+# Free-flow spawning: once we have this many drones, the economy is
+# strong enough that SpawnController should ignore proportions and
+# spend freely — just produce whatever we can afford.
+FREEFLOW_DRONE_THRESHOLD: int = 60
+
 # Gas phases: (min_drone_count, gas_per_base, max_pending_geysers)
 # Phase 1: Post-build — 1 gas per base (2 total), enough for ling speed + Lair
 # Phase 2: Mid-game — 1.5 gas per base (round up), supports upgrades + ravagers
@@ -240,7 +245,8 @@ class MacroManager:
             drone_count=self._ai.supply_workers,
         )
         army_comp: dict[UnitID, dict] = strip_morph_units(full_army_comp)
-        macro_plan.add(SpawnController(army_comp))
+        freeflow: bool = self._ai.supply_workers >= FREEFLOW_DRONE_THRESHOLD
+        macro_plan.add(SpawnController(army_comp, freeflow_mode=freeflow))
 
         # Proactive tech buildings — built when economy supports them
         self._build_proactive_tech()
