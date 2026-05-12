@@ -44,7 +44,7 @@ MID_GAME_TIME: float = 360.0
 # Prevents morphing away all base units (e.g. turning every Roach into a Ravager)
 # These are checked against the *current* army composition each frame.
 RAVAGER_MORPH_THRESHOLD: float = 0.15  # Roaches must be >= 15% of army
-BANELING_MORPH_THRESHOLD: float = 0.30  # Zerglings must be >= 30% of army
+BANELING_MORPH_THRESHOLD: float = 0.40  # Zerglings must be >= 40% of army
 
 # Maps morph unit -> (base unit, threshold)
 MORPH_GATES: dict[UnitID, tuple[UnitID, float]] = {
