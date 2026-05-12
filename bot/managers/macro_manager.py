@@ -15,9 +15,11 @@
 
 from cython_extensions import cy_closest_to
 from cython_extensions import cy_unit_pending
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as UnitID
 from sc2.ids.upgrade_id import UpgradeId as UpgradeID
 from sc2.position import Point2
+from sc2.units import Units
 
 from ares import AresBot
 from ares.behaviors.macro import (
@@ -32,7 +34,7 @@ from ares.behaviors.macro import (
     UpgradeController,
 )
 
-from bot.compositions import get_army_comp
+from bot.compositions import get_army_comp, should_morph, strip_morph_units
 
 # ── Constants ────────────────────────────────────────────────────────────────
 BEGIN_ATTACK_SUPPLY: float = 6.0
@@ -127,7 +129,15 @@ class MacroManager:
     def __init__(self, ai: AresBot) -> None:
         self._ai: AresBot = ai
         self._commenced_attack: bool = False
-        self._threats: dict[str, bool] = {}
+        self._threats: dict[str, bool] = {
+            "no_natural": False,
+            "timing_push": False,
+            "air_signs": False,
+            "proxy_signs": False,
+            "mass_light": False,
+            "cannon_rush": False,
+            "rush_detected": False,
+        }
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -162,6 +172,12 @@ class MacroManager:
         """Run every frame: economy, production, tech, upgrades, responses."""
         # Always mine
         self._ai.register_behavior(Mining())
+
+        # Morph units every frame, even during build order — SpawnController
+        # can't morph combat units (they're never idle), so we do it manually.
+        # This must run before the build-runner return so morphing continues
+        # during the opening build order.
+        self._morph_units_standalone()
 
         # Failsafe: if build is still active but minerals are piling up,
         # force-complete the build so dynamic macro can take over
@@ -213,11 +229,16 @@ class MacroManager:
         ))
 
         # Spawning — use composition from compositions.py
-        army_comp: dict[UnitID, dict] = get_army_comp(
+        # Strip morph units (Ravager, Baneling) from SpawnController because
+        # it can't morph combat units (they're never idle). Morphing is
+        # handled separately in _morph_units_standalone() which runs every
+        # frame, even during the build order.
+        full_army_comp: dict[UnitID, dict] = get_army_comp(
             self._ai.time,
             air_threat=self._threats.get("air_signs", False),
             drone_count=self._ai.supply_workers,
         )
+        army_comp: dict[UnitID, dict] = strip_morph_units(full_army_comp)
         macro_plan.add(SpawnController(army_comp))
 
         # Proactive tech buildings — built when economy supports them
@@ -360,6 +381,102 @@ class MacroManager:
             if th.is_idle:
                 th.train(UnitID.QUEEN)
                 return  # Only one per frame
+
+    # ── Morph Units ──────────────────────────────────────────────────────────
+
+    def _morph_units_standalone(self) -> None:
+        """Entry point for morph logic — runs every frame, even during build order.
+
+        Computes army counts and composition, then delegates to _morph_units.
+        This must run before the build-runner return so morphing continues
+        during the opening build order.
+        """
+        ai = self._ai
+        army_dict: dict[UnitID, Units] = ai.mediator.get_own_army_dict
+        army_counts: dict[UnitID, int] = {
+            uid: len(units) for uid, units in army_dict.items()
+        }
+        full_comp: dict[UnitID, dict] = get_army_comp(
+            ai.time,
+            air_threat=self._threats.get("air_signs", False),
+            drone_count=ai.supply_workers,
+        )
+        self._morph_units(full_comp, army_counts)
+
+    def _morph_units(
+        self,
+        full_comp: dict[UnitID, dict],
+        army_counts: dict[UnitID, int],
+    ) -> None:
+        """Manually morph Zerglings→Banelings and Roaches→Ravagers.
+
+        SpawnController can't morph combat units because it requires idle
+        build structures, and Zerglings/Roaches are never idle during combat.
+        This method directly issues morph commands based on composition
+        thresholds from compositions.py.
+
+        Only morphs when:
+        1. The base unit population meets the threshold (e.g. >=15% Roaches
+           for Ravagers, >=10% Zerglings for Banelings)
+        2. We're below the target proportion of morph units
+        3. We can afford the morph cost
+        4. The prerequisite building exists (Baneling Nest, Lair/Hive)
+
+        Perf note: O(base_units) per morph type, typically <30 units.
+        """
+        ai = self._ai
+        structure_dict: dict = ai.mediator.get_own_structures_dict
+
+        # ── Ravagers: Roach → Ravager ───────────────────────────────────
+        if should_morph(UnitID.RAVAGER, army_counts, full_comp):
+            # Need Lair or Hive tech
+            has_lair: bool = (
+                len(structure_dict.get(UnitID.LAIR, [])) > 0
+                or len(structure_dict.get(UnitID.HIVE, [])) > 0
+            )
+            if has_lair and ai.can_afford(UnitID.RAVAGER):
+                # Count morphing/pending ravagers to avoid over-morphing
+                pending_ravagers: int = cy_unit_pending(ai, UnitID.RAVAGER)
+                current_ravagers: int = army_counts.get(UnitID.RAVAGER, 0)
+                total_ravagers: int = current_ravagers + pending_ravagers
+
+                # Calculate how many more we need
+                comp_types: set[UnitID] = set(full_comp.keys())
+                total_comp: int = sum(army_counts.get(uid, 0) for uid in comp_types)
+                target_prop: float = full_comp[UnitID.RAVAGER]["proportion"]
+                target_count: int = int(total_comp * target_prop)
+                needed: int = max(0, target_count - total_ravagers)
+
+                if needed > 0:
+                    roaches: Units = ai.units(UnitID.ROACH)
+                    for roach in roaches:
+                        if needed <= 0:
+                            break
+                        roach(AbilityId.MORPHTORAVAGER_RAVAGER)
+                        needed -= 1
+
+        # ── Banelings: Zergling → Baneling ──────────────────────────────
+        if should_morph(UnitID.BANELING, army_counts, full_comp):
+            # Need Baneling Nest
+            has_bane_nest: bool = len(structure_dict.get(UnitID.BANELINGNEST, [])) > 0
+            if has_bane_nest and ai.can_afford(UnitID.BANELING):
+                pending_banelings: int = cy_unit_pending(ai, UnitID.BANELING)
+                current_banelings: int = army_counts.get(UnitID.BANELING, 0)
+                total_banelings: int = current_banelings + pending_banelings
+
+                comp_types: set[UnitID] = set(full_comp.keys())
+                total_comp: int = sum(army_counts.get(uid, 0) for uid in comp_types)
+                target_prop: float = full_comp[UnitID.BANELING]["proportion"]
+                target_count: int = int(total_comp * target_prop)
+                needed: int = max(0, target_count - total_banelings)
+
+                if needed > 0:
+                    zerglings: Units = ai.units(UnitID.ZERGLING)
+                    for zergling in zerglings:
+                        if needed <= 0:
+                            break
+                        zergling(AbilityId.MORPHTOBANELING_BANELING)
+                        needed -= 1
 
     # ── Expansion Logic ─────────────────────────────────────────────────────
 
