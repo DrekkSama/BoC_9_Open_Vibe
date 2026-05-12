@@ -129,6 +129,7 @@ class MacroManager:
     def __init__(self, ai: AresBot) -> None:
         self._ai: AresBot = ai
         self._commenced_attack: bool = False
+        self._air_signs_detected: bool = False  # Latches True once air threat seen
         self._threats: dict[str, bool] = {
             "no_natural": False,
             "timing_push": False,
@@ -651,16 +652,22 @@ class MacroManager:
             if not enemy_naturals:
                 self._threats["no_natural"] = True
 
-        # Air signs: enemy air tech structures OR visible air units
-        for structure in ai.enemy_structures:
-            if structure.type_id in AIR_STRUCTURES:
-                self._threats["air_signs"] = True
-                break
-        if not self._threats["air_signs"]:
-            for unit in ai.enemy_units:
-                if unit.type_id in AIR_UNIT_TYPES and not unit.is_memory:
-                    self._threats["air_signs"] = True
+        # Air signs: enemy air tech structures OR any air unit we've seen
+        # Include memory units — if we ever saw a Void Ray, that threat
+        # persists even if we lose vision of it.
+        # This is a latching flag: once detected, stays True for the rest
+        # of the game. You don't un-see air tech.
+        if not self._air_signs_detected:
+            for structure in ai.enemy_structures:
+                if structure.type_id in AIR_STRUCTURES:
+                    self._air_signs_detected = True
                     break
+        if not self._air_signs_detected:
+            for unit in ai.enemy_units:
+                if unit.type_id in AIR_UNIT_TYPES:
+                    self._air_signs_detected = True
+                    break
+        self._threats["air_signs"] = self._air_signs_detected
 
         # Proxy signs
         for structure in ai.enemy_structures:
