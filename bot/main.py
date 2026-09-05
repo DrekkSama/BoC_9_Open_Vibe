@@ -14,9 +14,12 @@ from sc2.units import Units
 from ares import AresBot
 from ares.consts import ALL_STRUCTURES, WORKER_TYPES, UnitRole
 
+from sc2.data import Result
+
 from bot.combat import CombatManager
 from bot.managers.macro_manager import MacroManager
 from bot.managers.queen_manager import QueenManager
+from bot.utilities.game_report import TelemetryRecorder
 
 # ── Constants ────────────────────────────────────────────────────────────────
 BEGIN_ATTACK_SUPPLY: float = 6.0
@@ -47,6 +50,7 @@ class GLM_Bot(AresBot):
         self._combat_mgr: Optional[CombatManager] = None
         self._queen_mgr: Optional[QueenManager] = None
         self._macro_mgr: Optional[MacroManager] = None
+        self._telemetry: Optional[TelemetryRecorder] = None
 
     @property
     def attack_target(self) -> Point2:
@@ -61,6 +65,7 @@ class GLM_Bot(AresBot):
         self._combat_mgr = CombatManager(self)
         self._queen_mgr = QueenManager(self)
         self._macro_mgr = MacroManager(self)
+        self._telemetry = TelemetryRecorder(self)
 
     async def on_step(self, iteration: int) -> None:
         await super().on_step(iteration)
@@ -87,6 +92,23 @@ class GLM_Bot(AresBot):
         # ── Queen management (always run) ───────────────────────────────────
         if self._queen_mgr is not None:
             self._queen_mgr.update()
+
+    async def on_end(self, game_result: Result) -> None:
+        """Write game-summary telemetry, then defer to ARES."""
+        await super().on_end(game_result)
+        if self._telemetry is not None:
+            winner: str = "tie"
+            if game_result == Result.Victory:
+                winner = "self"
+            elif game_result == Result.Defeat:
+                winner = "opponent"
+            self._telemetry.record_game_summary(
+                result=game_result,
+                game_length=self.time,
+                winner=winner,
+                map_name=self.game_info.map_name,
+            )
+            self._telemetry.flush()
 
     async def on_unit_created(self, unit: Unit) -> None:
         """Assign combat units to ATTACKING role, Queens to QueenManager."""

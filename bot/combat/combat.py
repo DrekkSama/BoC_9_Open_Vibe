@@ -189,6 +189,7 @@ class CombatManager:
         if self.aggressive:
             if ai.supply_army < 10:
                 self.aggressive = False
+                self._emit_transition("attack", "defend")
             return
 
         # Don't go aggressive too early
@@ -200,6 +201,28 @@ class CombatManager:
             self.aggressive = True
             # Reset engagement trackers when switching to aggressive
             self._squad_engaged = {k: False for k in self._squad_engaged}
+            self._emit_transition("defend", "attack")
+
+    def _combat_sim_snapshot(self) -> dict:
+        """Snapshot of squad engagement state from can_win_fight() sim results."""
+        engaged_ids = [sid for sid, engaged in self._squad_engaged.items() if engaged]
+        return {
+            "any_squad_engaged": len(engaged_ids) > 0,
+            "engaged_squad_ids": engaged_ids,
+            "engaged_count": len(engaged_ids),
+        }
+
+    def _emit_transition(self, from_state: str, to_state: str) -> None:
+        """Emit a state-transition telemetry event on aggressive flip."""
+        ai = self._ai
+        if ai._telemetry is not None:
+            ai._telemetry.record_state_transition(
+                from_state=from_state,
+                to_state=to_state,
+                game_time=ai.time,
+                army_supply=ai.supply_army,
+                combat_sim_state=self._combat_sim_snapshot(),
+            )
 
     def _track_squad_engagement(
         self,
