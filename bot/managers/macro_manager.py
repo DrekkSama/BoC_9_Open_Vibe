@@ -176,8 +176,8 @@ class MacroManager:
 
     def update(self) -> None:
         """Run every frame: economy, production, tech, upgrades, responses."""
-        # Always mine
-        self._ai.register_behavior(Mining())
+        # Always mine (mineral boosting / speedmining disabled)
+        self._ai.register_behavior(Mining(mineral_boost=False))
 
         # Morph units every frame, even during build order — SpawnController
         # can't morph combat units (they're never idle), so we do it manually.
