@@ -5,6 +5,9 @@
 # Set custom values here for your bot
 MyBotName: GLM_Bot
 MyBotRace: Zerg
+# Local opponent: name from run.py LOCAL_OPPONENTS registry (e.g. ZergTestBot)
+# empty -> random Computer (AI) opponent
+OpponentBot: ZergTestBot
 # setting true allows auto upload to aiareana (https://aiarena.net/) on push to `main` branch
 # see tutorial on readme before setting to True
 AutoUploadToAiarena: False

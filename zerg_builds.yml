@@ -31,7 +31,8 @@ BuildChoices:
     Zerg:
         BotName: ZergRace
         Cycle:
-            - B2GM_Roach_Ravager_Ling
+            #- B2GM_Roach_Ravager_Ling
+            - Lambo_ZvZ_Economic
 
     # Can also use specific opponent ids (overrides race options above)
     a_bot_opponent_id_from_aiarena:
@@ -68,4 +69,29 @@ Builds:
             - 35 gas x2
             - 40 evolutionchamber
             - 46 roach x5
+
+    Lambo_ZvZ_Economic:
+        ConstantWorkerProductionTill: 44
+        ShouldHandleGasSteal: False
+        AutoSupplyAtSupply: 28
+        OpeningBuildOrder:
+            - 13 overlord
+            - 13 overlord_scout:
+                  [enemy_ramp]
+            - 16 hatchery
+            - 18 extractor
+            - 17 spawningpool
+            - 21 overlord
+            - 21 queen x2
+            - 26 ZERGLINGMOVEMENTSPEED
+            - 29 zergling x4
+            - 31 hatchery
+            - 30 banelingnest
+            - 33 overlord
+            - 33 zergling x8
+            - 36 queen
+            - 39 baneling x2
+            - 42 overlord
+            - 44 evolutionchamber
+            - 47 overlord
         

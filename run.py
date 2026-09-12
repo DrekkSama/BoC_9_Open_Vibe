@@ -18,6 +18,7 @@ sys.path.append("ares-sc2")
 import yaml
 
 from bot.main import GLM_Bot as MyBot
+from competitors.Zerg_Test_Bot import ZergTestBot
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -41,22 +42,41 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
+OPPONENT_BOT: str = "OpponentBot"
+
+# Selectable local opponents: name in config.yml -> (Bot factory, Race)
+LOCAL_OPPONENTS: dict = {
+    "ZergTestBot": (ZergTestBot, Race.Zerg),
+}
+
+
+def get_local_opponent(config: dict):
+    """Return a Bot instance from LOCAL_OPPONENTS via the OpponentBot config key,
+    or None to fall back to a random Computer."""
+    name: str = config.get(OPPONENT_BOT, "")
+    if name not in LOCAL_OPPONENTS:
+        if name:
+            logger.warning(f"Unknown OpponentBot '{name}', using Computer opponent")
+        return None
+    bot_cls, race = LOCAL_OPPONENTS[name]
+    return Bot(race, bot_cls(), name)
 
 
 def main():
     bot_name: str = "MyBot"
     race: Race = Race.Random
+    config: dict = {}
 
     __user_config_location__: str = path.abspath(".")
     user_config_path: str = path.join(__user_config_location__, CONFIG_FILE)
     # attempt to get race and bot name from config file if they exist
     if path.isfile(user_config_path):
         with open(user_config_path) as config_file:
-            config: dict = yaml.safe_load(config_file)
-            if MY_BOT_NAME in config:
-                bot_name = config[MY_BOT_NAME]
-            if MY_BOT_RACE in config:
-                race = Race[config[MY_BOT_RACE].title()]
+            config: dict = yaml.safe_load(config_file) or {}
+        if MY_BOT_NAME in config:
+            bot_name = config[MY_BOT_NAME]
+        if MY_BOT_RACE in config:
+            race = Race[config[MY_BOT_RACE].title()]
 
     bot1 = Bot(race, MyBot(), bot_name)
 
@@ -84,25 +104,31 @@ def main():
 
         # Override auto-discovery: use this list instead
         map_list: List[str] = [
-            "PylonAIE_v4",
-            "PersephoneAIE_v4",
-            "TorchesAIE_v4",
-            "IncorporealAIE_v4",
-            "MagannathaAIE_v2",
+            #"PylonAIE_v4",
+            #"PersephoneAIE_v4",
+            #"TorchesAIE_v4",
+            #"IncorporealAIE_v4",
+            #"MagannathaAIE_v2",
             "UltraloveAIE_v2",
+            #"UltraloveAIE_5.0.16",
             #### Micro Maps 
             #"Tier1MicroAIArena_v6",  # Micro Map
             #"Tier2MicroAIArena_v6",  # Micro Map
         ]
 
-        random_race = random.choice([Race.Terran, Race.Zerg, Race.Protoss])
+        # Local game: configured opponent bot if set, else random Computer
+        opponent = get_local_opponent(config)
+        if opponent is None:
+            opponent = Computer(
+                random.choice([Race.Terran, Race.Zerg, Race.Protoss]),
+                Difficulty.CheatVision,
+                ai_build=AIBuild.Macro,
+            )
+
         print("Starting local game...")
         run_game(
             maps.get(random.choice(map_list)),
-            [
-                bot1,
-                Computer(random_race, Difficulty.CheatVision, ai_build=AIBuild.Macro),
-            ],
+            [bot1, opponent],
             realtime=False,
         )
 
