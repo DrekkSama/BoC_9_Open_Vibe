@@ -43,6 +43,7 @@ MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
 OPPONENT_BOT: str = "OpponentBot"
+MAPS_KEY: str = "Maps"
 
 # Selectable local opponents: name in config.yml -> (Bot factory, Race)
 LOCAL_OPPONENTS: dict = {
@@ -60,6 +61,18 @@ def get_local_opponent(config: dict):
         return None
     bot_cls, race = LOCAL_OPPONENTS[name]
     return Bot(race, bot_cls(), name)
+
+
+def get_map_list(config: dict) -> List[str]:
+    """Maps from the Maps config key, else auto-discovered .SC2Map files."""
+    configured: List[str] = config.get(MAPS_KEY) or []
+    if configured:
+        return configured
+    return [
+        p.name.replace(f".{MAP_FILE_EXT}", "")
+        for p in Path(MAPS_PATH).glob(f"*.{MAP_FILE_EXT}")
+        if p.is_file()
+    ]
 
 
 def main():
@@ -87,11 +100,7 @@ def main():
         print(result, " against opponent ", opponentid)
     else:
         # Local game
-        map_list: List[str] = [
-            p.name.replace(f".{MAP_FILE_EXT}", "")
-            for p in Path(MAPS_PATH).glob(f"*.{MAP_FILE_EXT}")
-            if p.is_file()
-        ]
+        map_list: List[str] = get_map_list(config)
         if len(map_list) == 0:
             logger.error(f"Can't find maps, please check `MAPS_PATH` in `run.py'")
             logger.info("Trying back up option")
@@ -101,20 +110,6 @@ def main():
                 f"If this path is incorrect please edit the `MAPS_PATH` in `run.py` \n"
                 f"Tip: If you're using linux, MAPS_PATH will definitely need updating\n"
             )
-
-        # Override auto-discovery: use this list instead
-        map_list: List[str] = [
-            #"PylonAIE_v4",
-            #"PersephoneAIE_v4",
-            #"TorchesAIE_v4",
-            #"IncorporealAIE_v4",
-            #"MagannathaAIE_v2",
-            "UltraloveAIE_v2",
-            #"UltraloveAIE_5.0.16",
-            #### Micro Maps 
-            #"Tier1MicroAIArena_v6",  # Micro Map
-            #"Tier2MicroAIArena_v6",  # Micro Map
-        ]
 
         # Local game: configured opponent bot if set, else random Computer
         opponent = get_local_opponent(config)

@@ -8,6 +8,19 @@ MyBotRace: Zerg
 # Local opponent: name from run.py LOCAL_OPPONENTS registry (e.g. ZergTestBot)
 # empty -> random Computer (AI) opponent
 OpponentBot: ZergTestBot
+# Maps for local runs: one chosen at random each run.
+# empty -> auto-discover all .SC2Map files in MAPS_PATH
+Maps:
+    - UltraloveAIE_v2
+    # - PylonAIE_v4
+    # - PersephoneAIE_v4
+    # - TorchesAIE_v4
+    # - IncorporealAIE_v4
+    # - MagannathaAIE_v2
+    # - UltraloveAIE_5.0.16
+    #### Micro Maps
+    # - Tier1MicroAIArena_v6
+    # - Tier2MicroAIArena_v6
 # setting true allows auto upload to aiareana (https://aiarena.net/) on push to `main` branch
 # see tutorial on readme before setting to True
 AutoUploadToAiarena: False
