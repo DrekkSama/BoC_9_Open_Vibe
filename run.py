@@ -18,7 +18,7 @@ sys.path.append("ares-sc2")
 import yaml
 
 from bot.main import GLM_Bot as MyBot
-from competitors.Zerg_Test_Bot import ZergTestBot
+from competitors.Zerg_Test_Bot import PATCH_RUSH_PROFILES, ZergTestBot
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -44,6 +44,7 @@ MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
 OPPONENT_BOT: str = "OpponentBot"
 MAPS_KEY: str = "Maps"
+PATCH_KEY: str = "Patch"
 
 # Selectable local opponents: name in config.yml -> (Bot factory, Race)
 LOCAL_OPPONENTS: dict = {
@@ -53,14 +54,28 @@ LOCAL_OPPONENTS: dict = {
 
 def get_local_opponent(config: dict):
     """Return a Bot instance from LOCAL_OPPONENTS via the OpponentBot config key,
-    or None to fall back to a random Computer."""
+    or None to fall back to a random Computer. Sets the rush profile from Patch."""
     name: str = config.get(OPPONENT_BOT, "")
     if name not in LOCAL_OPPONENTS:
         if name:
             logger.warning(f"Unknown OpponentBot '{name}', using Computer opponent")
         return None
     bot_cls, race = LOCAL_OPPONENTS[name]
-    return Bot(race, bot_cls(), name)
+    bot = bot_cls()
+    if bot_cls is ZergTestBot:
+        patch: str = config.get(PATCH_KEY, "Current")
+        profile: str = PATCH_RUSH_PROFILES.get(patch, "")
+        if profile:
+            bot.rush_profile = profile
+        elif patch in PATCH_RUSH_PROFILES.values():
+            # patch key already holds a profile name directly
+            bot.rush_profile = patch
+        else:
+            logger.warning(
+                f"Unknown Patch '{patch}', using {bot.rush_profile}. "
+                f"Valid: {sorted(PATCH_RUSH_PROFILES)}"
+            )
+    return Bot(race, bot, name)
 
 
 def get_map_list(config: dict) -> List[str]:

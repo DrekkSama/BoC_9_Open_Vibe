@@ -6,6 +6,7 @@
 
 from typing import Optional
 
+from loguru import logger
 from sc2.ids.unit_typeid import UnitTypeId as UnitID
 from sc2.position import Point2
 from sc2.unit import Unit
@@ -20,6 +21,31 @@ from bot.combat import CombatManager
 from bot.managers.macro_manager import MacroManager
 from bot.managers.queen_manager import QueenManager
 from bot.utilities.game_report import TelemetryRecorder
+
+
+# ── Patch 5.0.16 compatibility shim ─────────────────────────────────────────
+# New AIE maps emit units unknown to the installed python-sc2 enum
+# (e.g. XelNagaTowerRangeIndicatorDummy == 2046). Unit.type_id does a strict
+# UnitTypeId(value) lookup and raises, crashing _prepare_units before on_start.
+# Fall back to NOTAUNIT for any unknown id so these dummy props are skipped
+# instead of killing the bot.
+_enum_lookup_cache: dict[int, UnitID] = {}
+
+
+def _safe_type_id(self: Unit) -> UnitID:
+    unit_type: int = self._proto.unit_type
+    if unit_type in UnitID._value2member_map_:
+        return UnitID(unit_type)
+    if unit_type not in _enum_lookup_cache:
+        logger.warning(
+            f"Unknown unit type id {unit_type} "
+            f"(patch-added dummy?), treating as NOTAUNIT"
+        )
+        _enum_lookup_cache[unit_type] = UnitID.NOTAUNIT
+    return _enum_lookup_cache[unit_type]
+
+
+Unit.type_id = property(_safe_type_id)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 BEGIN_ATTACK_SUPPLY: float = 6.0
