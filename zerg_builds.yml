@@ -11,28 +11,33 @@ BuildChoices:
     test_123:
         BotName: Test
         Cycle:
-            - B2GM_Roach_Ravager_Ling
+            #- B2GM_Roach_Ravager_Ling
+            - Pig_Hatch_Firs_5.0.16
 
     Protoss:
         BotName: ProtossRace
         Cycle:
-            - B2GM_Roach_Ravager_Ling
+            #- B2GM_Roach_Ravager_Ling
+            - Pig_Hatch_Firs_5.0.16
 
     Random:
         BotName: RandomRace
         Cycle:
-            - B2GM_Roach_Ravager_Ling
+            #- B2GM_Roach_Ravager_Ling
+            - Pig_Hatch_Firs_5.0.16
 
     Terran:
         BotName: TerranRace
         Cycle:
-            - B2GM_Roach_Ravager_Ling
+            #- B2GM_Roach_Ravager_Ling
+            - Pig_Hatch_Firs_5.0.16
 
     Zerg:
         BotName: ZergRace
         Cycle:
             #- B2GM_Roach_Ravager_Ling
-            - Lambo_ZvZ_Economic
+            #- Lambo_ZvZ_Economic
+            - Pig_Hatch_Firs_5.0.16
 
     # Can also use specific opponent ids (overrides race options above)
     a_bot_opponent_id_from_aiarena:
@@ -94,4 +99,25 @@ Builds:
             - 42 overlord
             - 44 evolutionchamber
             - 47 overlord
+
+    # Pig's Hatch First (5.0.16) — extractor-trick variant, skipping the
+    # trick per note: plain 12 overlord, same output.
+    # Notes: bank minerals on 18 supply for queens, lings scout/defend,
+    # 4-5 safety roaches, 3rd base/tech switch at 48.
+    Pig_Hatch_Firs_5.0.16:
+        ConstantWorkerProductionTill: 44
+        ShouldHandleGasSteal: False
+        AutoSupplyAtSupply: 28
+        OpeningBuildOrder:
+            - 12 overlord
+            - 13 hatchery
+            - 13 extractor
+            - 13 spawningpool
+            - 18 queen x2
+            - 23 zergling x4
+            - 24 overlord x2
+            - 30 queen
+            - 40 extractor x2
+            - 42 roachwarren
+            - 48 hatchery
         
