@@ -6,7 +6,9 @@ Limitations: No defense, no upgrades, no injects. The notes assume combat losses
              free up supply, so Overlords are morphed whenever supply-blocked.
 
 Profiles:
-  - "12_pool_zerg_rush" (default): 12 Pool rush, attacks at 16 Zerglings
+  - "12_pool_zerg_rush" (pre-5.0.16, 12 starting workers): attacks at 16 Zerglings
+  - "8_pool_zerg_rush" (patch 5.0.16, 8 starting workers): same rush shifted
+    4 supply down (Pool at 8, Overlord/drones at 10, Hatchery at 12, Queen at 14)
   - "fungal_test" (enable_rush=False, enable_fungal=True): Infestor Fungal module
 """
 
@@ -14,27 +16,54 @@ from sc2.bot_ai import BotAI
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.ability_id import AbilityId
 
-# ── Profile: "12_pool_zerg_rush" ────────────────────────────────────────────
-# 12  Spawning Pool
-# 14  Overlord / drones to 14
-# 14  Zergling x3 (waves stream as larvae allow)
-# 16  Hatchery (natural)
-# 18  Queen
-# 20  Zergling x2  → attack once the wave is complete
-RUSH_DRONE_CAP: int = 14         # drone target once the pool has started
-RUSH_HATCHERY_SUPPLY: int = 16   # expand to the natural
-RUSH_QUEEN_SUPPLY: int = 18      # train the first Queen
-RUSH_ATTACK_ZERGLINGS: int = 16  # 8 pairs; attack-move when reached
+# ── Rush profiles (pre-5.0.16 starts with 12 workers, 5.0.16 with 8) ────────
+# 12_pool_zerg_rush:
+#   12  Spawning Pool
+#   14  Overlord / drones to 14
+#   14  Zergling x3 (waves stream as larvae allow)
+#   16  Hatchery (natural)
+#   18  Queen
+#   20  Zergling x2  → attack once the wave is complete
+# 8_pool_zerg_rush (same build shifted 4 supply down):
+#   8   Spawning Pool
+#   10  Overlord / drones to 10
+#   10  Zergling x3
+#   12  Hatchery (natural)
+#   14  Queen
+#   16  Zergling x2  → attack once the wave is complete
+RUSH_PROFILES: dict = {
+    "12_pool_zerg_rush": {
+        "drone_cap": 14,          # drone target once the pool has started
+        "pool_min_workers": 11,   # pool ordered at game start (12 supply)
+        "hatchery_supply": 16,    # expand to the natural (total supply used)
+        "attack_zerglings": 16,   # 8 pairs; attack-move when reached
+    },
+    "8_pool_zerg_rush": {
+        "drone_cap": 10,
+        "pool_min_workers": 8,
+        "hatchery_supply": 12,
+        "attack_zerglings": 16,
+    },
+}
+
+# config.yml `Patch` key -> rush profile
+PATCH_RUSH_PROFILES: dict = {
+    "Current": "12_pool_zerg_rush",
+    "5.0.16": "8_pool_zerg_rush",
+}
+DEFAULT_RUSH_PROFILE: str = "12_pool_zerg_rush"
 
 
 class ZergTestBot(BotAI):
     """Zerg test bot with modular threat behaviors.
 
     Profiles are selected via class attributes:
-      - enable_rush (default True): "12_pool_zerg_rush" profile
+      - rush_profile: name into RUSH_PROFILES ("12_pool_zerg_rush" default)
+      - enable_rush (default True): run the selected rush profile
       - enable_fungal (default False): Infestor Fungal Growth module
     """
 
+    rush_profile: str = DEFAULT_RUSH_PROFILE
     enable_rush: bool = True
     enable_fungal: bool = False
 
@@ -57,10 +86,14 @@ class ZergTestBot(BotAI):
         if self.enable_fungal:
             await self._run_fungal(cc)
 
+    def _rush_settings(self) -> dict:
+        """Tunables for the active rush profile (falls back to the default)."""
+        return RUSH_PROFILES.get(self.rush_profile, RUSH_PROFILES[DEFAULT_RUSH_PROFILE])
+
     async def _run_economy(self, cc) -> None:
         """Profile-aware economy.
 
-        12_pool_zerg_rush: drones to 14, Overlords only when supply-blocked, no gas.
+        rush: drones to the profile cap, Overlords only when supply-blocked, no gas.
         fungal_test: original freeform economy (Drones, Overlords, Extractors).
         """
         larvae = self.larva
@@ -68,8 +101,9 @@ class ZergTestBot(BotAI):
             return
 
         if self.enable_rush:
+            drone_cap: int = self._rush_settings()["drone_cap"]
             # Drones only until the cap, then larvae are reserved for lings
-            if self.workers.amount < RUSH_DRONE_CAP and self.supply_left > 0:
+            if self.workers.amount < drone_cap and self.supply_left > 0:
                 if self.can_afford(UnitTypeId.DRONE):
                     larvae.random.train(UnitTypeId.DRONE)
             # Rush notes assume Overlords only when supply-blocked
@@ -102,33 +136,35 @@ class ZergTestBot(BotAI):
             drone.gather(self.mineral_field.closest_to(drone))
 
     async def _run_rush(self, cc) -> None:
-        """12_pool_zerg_rush profile: Pool at 12, lings from 14, natural at 16,
-        Queen at 18, then all-in attack once the zergling wave is complete."""
-        # Spawning Pool at 12 supply
+        """Rush profile (see RUSH_PROFILES): pool first thing, lings from the
+        pool, natural Hatchery, Queen, then all-in attack at the wave size."""
+        settings: dict = self._rush_settings()
+
+        # Spawning Pool at game start (supply = workers + 1 overlord)
         if (
             not self.structures(UnitTypeId.SPAWNINGPOOL)
             and not self.already_pending(UnitTypeId.SPAWNINGPOOL)
             and self.can_afford(UnitTypeId.SPAWNINGPOOL)
-            and self.workers.amount >= 11
+            and self.workers.amount >= settings["pool_min_workers"]
         ):
             await self.build(
                 UnitTypeId.SPAWNINGPOOL,
                 near=cc.position.towards(self.game_info.map_center, 8),
             )
 
-        # Hatchery at the natural (16 supply)
+        # Hatchery at the natural (profile's total-supply mark)
         if (
-            self.supply_workers >= RUSH_HATCHERY_SUPPLY
+            self.supply_used >= settings["hatchery_supply"]
             and len(self.townhalls) < 2
             and not self.already_pending(UnitTypeId.HATCHERY)
             and self.can_afford(UnitTypeId.HATCHERY)
         ):
             await self.expand_now()
 
-        # Queen from the natural once it completes (18 supply)
+        # Queen from the natural once it completes
         if (
             len(self.townhalls.ready) >= 2
-            and             self.units(UnitTypeId.QUEEN).amount < 1
+            and self.units(UnitTypeId.QUEEN).amount < 1
             and cc.is_idle
             and not self.already_pending(UnitTypeId.QUEEN)
             and self.can_afford(UnitTypeId.QUEEN)
@@ -144,7 +180,7 @@ class ZergTestBot(BotAI):
 
         # Attack trigger: once the wave is complete, send everything
         zerglings = self.units(UnitTypeId.ZERGLING)
-        if zerglings.amount >= RUSH_ATTACK_ZERGLINGS:
+        if zerglings.amount >= settings["attack_zerglings"]:
             target = self._rush_target()
             for ling in zerglings.idle:
                 ling.attack(target)
